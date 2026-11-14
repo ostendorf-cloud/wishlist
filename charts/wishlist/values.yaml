@@ -1,0 +1,139 @@
+# Default values for wishlist.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ostendorf-cloud/wishlist
+  # Defaults to .Chart.AppVersion when left empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # No RBAC is created: this application makes no Kubernetes API calls of its own.
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# Matches the Dockerfile's distroless "nonroot" base image, uid/gid 65532.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  # Also used as the container port and for the probes: the binary listens
+  # on :8080, fixed, for this listener.
+  port: 8080
+  # govue's admin listener: health, readiness and metrics, never routed by
+  # this chart's own Ingress or HTTPRoute (templates/ingress.yaml and
+  # templates/httproute.yaml only ever reference service.port above).
+  # Reached only from inside the cluster, by a kubelet's probe or a
+  # Prometheus ServiceMonitor/PodMonitor (not part of this chart). The
+  # binary listens on :8081, fixed, for this one.
+  adminPort: 8081
+
+# Ingress and httpRoute below are two ways to reach this chart's own Service
+# externally, chosen by their own enabled flag. Mutually exclusive (see
+# templates/deployment.yaml's own fail guard): an install never renders
+# both for the same hostname. Both default to false, so a default install
+# renders no external route at all until one of the two is chosen.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: wishlist.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Gateway API alternative to ingress above; see that block's own comment for
+# the mutual-exclusion rule.
+#
+# The HTTPRoute and Gateway kinds are Gateway API CRDs. This chart never
+# ships them (see kubernetes-conventions) and never creates the Gateway
+# itself: both the CRDs and a running Gateway with a listener that allows
+# this release's namespace are prerequisites, provisioned once per cluster,
+# not by this chart.
+httpRoute:
+  enabled: false
+  # Hostnames this HTTPRoute matches, mirroring ingress.hosts' host field.
+  # A Gateway listener's own hostname (and allowedRoutes) still decides
+  # whether traffic for one of these actually reaches this HTTPRoute; see
+  # kubernetes-conventions.
+  hostnames: []
+  annotations: {}
+  # Routing is fixed to this chart's own Service on service.port: no
+  # values-driven way to add a second backend or a per-path rule, the same
+  # single-backend shape ingress.hosts already assumes. An HTTPRoute rule
+  # with no "matches" defaults to a "/" prefix match per the Gateway API
+  # spec, the same default an Ingress with one "/" path rule gives.
+  parentRefs:
+    # Name of the Gateway this HTTPRoute attaches to. Required when
+    # httpRoute.enabled is true.
+    name: ""
+    # Namespace the Gateway lives in. Required when httpRoute.enabled is
+    # true: a Gateway is usually platform owned and lives in a different
+    # namespace than this release, and Gateway API's own parentRefs
+    # defaults an unset namespace to the HTTPRoute's own namespace, which
+    # is normally wrong here. The Gateway's own allowedRoutes still decides
+    # whether this reference is actually honoured.
+    namespace: ""
+    # Optional: the specific listener to attach to, when the Gateway
+    # exposes more than one, for example separate HTTP and HTTPS
+    # listeners.
+    sectionName: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    # No CPU limit: serving the SPA bundle is bursty on a page load, not
+    # broken for being briefly busy. A memory limit stays in place as a
+    # safety net against a genuine leak.
+    memory: 128Mi
+
+startupProbe:
+  # Disabled by default: startup only loads the embedded frontend, which is
+  # not expected to be slow enough to need one.
+  enabled: false
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  failureThreshold: 30
+
+livenessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
