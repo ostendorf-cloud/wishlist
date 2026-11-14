@@ -1,0 +1,18 @@
+extends: default
+
+ignore:
+  - web/node_modules/
+  - web/pnpm-lock.yaml
+  # Helm template files use Go template syntax ({{ }}), which is not valid
+  # plain YAML; values.yaml, Chart.yaml and values.schema.json stay linted.
+  - charts/*/templates/
+  # Stale worktrees from other parallel sessions on this repository; never
+  # this repository's own files.
+  - .claude/worktrees/
+
+rules:
+  line-length:
+    max: 140
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false", "on"]

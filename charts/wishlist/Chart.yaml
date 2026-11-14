@@ -1,0 +1,18 @@
+apiVersion: v2
+name: wishlist
+description: >-
+  Shared wish lists with reservations the owner never sees: a Go service serving a Vue 3
+  single page application.
+type: application
+# version and appVersion are stamped by release-me on every release; see release-me.yaml.
+version: 0.1.0
+appVersion: 0.1.0
+home: https://github.com/ostendorf-cloud/wishlist
+sources:
+  - https://github.com/ostendorf-cloud/wishlist
+maintainers:
+  - name: Simon Ostendorf
+    email: github@simon-ostendorf.de
+keywords:
+  - wishlist
+  - vue

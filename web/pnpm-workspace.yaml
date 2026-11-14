@@ -1,0 +1,10 @@
+# web/ is a single package, not a multi-package workspace: this file exists only
+# because pnpm 12 stopped reading package.json's own "pnpm" field, warning instead of
+# honouring it. See https://pnpm.io/settings.
+#
+# Forces one @testing-library/dom across @testing-library/jest-dom, @testing-library/
+# user-event and @testing-library/vue: without this, @testing-library/vue's own
+# dependency on an older major resolves alongside the others' newer one, and Vitest
+# sees two different @testing-library/dom instances in the same test run.
+overrides:
+  '@testing-library/dom': ^10

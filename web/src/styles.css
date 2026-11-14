@@ -1,0 +1,9 @@
+/*
+ * The token contract plus this app's own wishlist theme. Tailwind does not
+ * scan a git dependency's sources by default, so @source points it at
+ * govue's own component files, the same way its README documents.
+ */
+@import '@ostendorf-cloud/govue/styles.css';
+@import './theme/wishlist.css';
+
+@source '../node_modules/@ostendorf-cloud/govue/src';

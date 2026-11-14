@@ -1,0 +1,43 @@
+# Every tool this repository needs, pinned. CI installs from this same file through
+# mise-action, so local and CI run identical versions. Nothing is installed any other way.
+[tools]
+go = "1.27.4"
+task = "3"
+# The web/ package. pnpm is the package manager, so npm is never called directly.
+# pnpm is pinned to the patch, not the major: the Dockerfile's frontend stage installs
+# one literal version, and the lockfile that stage reads with --frozen-lockfile has to
+# have been written by the same one. A floating major silently drifts the two apart.
+node = "26"
+pnpm = "12.19.0"
+# Pinned to the patch, not "2": a golangci-lint release is built against one Go patch and
+# cannot read the stdlib export data of a newer one, so the two versions move together.
+golangci-lint = "2.15.0"
+actionlint = "1"
+markdownlint-cli2 = "0.24.1"
+yamllint = "1"
+gitleaks = "8"
+hadolint = "2"
+# addlicense has no short name in the mise registry. It is the one entry here
+# that needs the explicit aqua backend prefix to resolve.
+"aqua:google/addlicense" = "1.2.0"
+# Pinned to the 3.x line, not 4.x: the helm-unittest plugin used to verify
+# charts/wishlist targets Helm 3's plugin API.
+helm = "3.22.1"
+kubeconform = "0.7.0"
+
+# helm-unittest (charts/wishlist's own verification plugin) is a Helm plugin, not a
+# conventional CLI, and the baseline forbids "helm plugin install <url>" regardless of Helm
+# version, so it is pinned through mise's generic "github:" backend instead. mise downloads and
+# checksums the one release asset built for the current OS and architecture, and "postinstall"
+# then copies that directory straight into Helm's own plugin folder, never through Helm's own
+# installer, so there is nothing left for Helm to ask to verify. "rename_exe" undoes mise's own
+# default of stripping the OS/arch suffix off a single-binary download, which plugin.yaml needs
+# kept to find the right binary by name.
+[tools."github:helm-unittest/helm-unittest"]
+version = "1.2.1"
+depends = ["helm"]
+postinstall = "rm -rf \"$(helm env HELM_PLUGINS)/helm-unittest\" && mkdir -p \"$(helm env HELM_PLUGINS)\" && cp -r \"$MISE_TOOL_INSTALL_PATH\" \"$(helm env HELM_PLUGINS)/helm-unittest\""
+
+[tools."github:helm-unittest/helm-unittest".platforms]
+linux-x64 = { rename_exe = "untt-linux-amd64" }
+macos-arm64 = { rename_exe = "untt-macos-arm64" }
