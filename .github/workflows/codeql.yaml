@@ -1,0 +1,25 @@
+name: codeql
+
+# Scanning delegated to the organisation's shared reusable workflow. The
+# language list stays this repository's own: Go at the module root, and
+# the TypeScript and Vue sources under web/.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # CodeQL's own recommended default: a weekly run catches newly
+    # disclosed vulnerability patterns in code that has not changed.
+    - cron: "10 2 * * 1"
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+jobs:
+  analyze:
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-codeql.yaml@91979cf4cff86d00ebee28dfaf6e3b452aaeb1a9  # v0.2.2
+    with:
+      languages: '["go", "javascript-typescript"]'
