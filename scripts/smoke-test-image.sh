@@ -92,7 +92,10 @@ assert_status "/metrics" "200" "$admin_url"
 assert_status "/metrics" "404"
 
 assert_status "/" "200"
-assert_status "/index.html" "200"
+
+# http.FileServerFS canonicalises any request for /index.html to / with a
+# 301 redirect; that is correct, standard net/http behaviour, not a bug.
+assert_status "/index.html" "301"
 
 if [[ $fail -ne 0 ]]; then
   echo "smoke test failed" >&2

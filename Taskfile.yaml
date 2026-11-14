@@ -60,16 +60,16 @@ tasks:
           $(find web/src -type f \( -name "*.ts" -o -name "*.vue" \) \
             -not -path "*/node_modules/*" -not -path "*/dist/*")
 
+  lint:docker:
+    desc: Dockerfile lint
+    cmds:
+      - hadolint Dockerfile
+
   lint:shell:
     desc: Shell lint and format check over scripts/
     cmds:
       - shellcheck scripts/*.sh
       - shfmt --diff --indent 2 --case-indent scripts/*.sh
-
-  lint:docker:
-    desc: Dockerfile lint
-    cmds:
-      - hadolint Dockerfile
 
   lint:helm:
     desc: Helm chart lint
