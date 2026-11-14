@@ -1,0 +1,30 @@
+name: dco
+
+# This repository's enforcement of the Developer Certificate of Origin,
+# delegating to the organisation's shared reusable workflow.
+#
+# "secrets: inherit" forwards GH_APP_SECURITY_PRIVATE_KEY, so the verdict is
+# published as the security app's own check run. Without it the check still
+# enforces through this job's own pass or fail status.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  signoff:
+    # ostendorf-cloud/workflows has not cut a floating v0 tag yet; its newest
+    # tag at the time this repository was scaffolded is v0.2.2. Pinned at
+    # that tag's own commit, like every other reusable workflow call here;
+    # see AGENTS.md's Deviations for repointing at a floating v0 once it
+    # exists.
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-dco.yaml@91979cf4cff86d00ebee28dfaf6e3b452aaeb1a9  # v0.2.2
+    secrets: inherit
+    with:
+      runs-on-runner: blacksmith-2vcpu-ubuntu-2404

@@ -1,0 +1,18 @@
+suite: ingress and httpRoute are mutually exclusive
+templates:
+  - templates/deployment.yaml
+set:
+  ingress:
+    enabled: true
+  httpRoute:
+    enabled: true
+    parentRefs:
+      name: shared-gateway
+      namespace: gateway-system
+tests:
+  - it: fails the render when both ingress and httpRoute are enabled
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            ingress.enabled and httpRoute.enabled cannot both be true: pick one external
+            route and turn the other off.
