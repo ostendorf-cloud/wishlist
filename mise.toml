@@ -27,7 +27,7 @@ shfmt = "3"
 # Pinned to the 3.x line, not 4.x: the helm-unittest plugin used to verify
 # charts/wishlist targets Helm 3's plugin API.
 helm = "3.22.1"
-kubeconform = "0.7.0"
+kubeconform = "0.8.0"
 
 # helm-unittest (charts/wishlist's own verification plugin) is a Helm plugin, not a
 # conventional CLI, and the baseline forbids "helm plugin install <url>" regardless of Helm
