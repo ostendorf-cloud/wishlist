@@ -8,7 +8,7 @@ task = "3"
 # one literal version, and the lockfile that stage reads with --frozen-lockfile has to
 # have been written by the same one. A floating major silently drifts the two apart.
 node = "26"
-pnpm = "12.19.0"
+pnpm = "12.21.0"
 # Pinned to the patch, not "2": a golangci-lint release is built against one Go patch and
 # cannot read the stdlib export data of a newer one, so the two versions move together.
 golangci-lint = "2.15.0"
