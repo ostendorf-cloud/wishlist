@@ -24,5 +24,5 @@ jobs:
     # that tag's own commit, like every other reusable workflow call here;
     # see AGENTS.md's Deviations for repointing at a floating v0 once it
     # exists.
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-dco.yaml@91979cf4cff86d00ebee28dfaf6e3b452aaeb1a9  # v0.2.2
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-dco.yaml@a798b963d20b239bec48c101af965e08fac36146  # v0.3.0
     secrets: inherit

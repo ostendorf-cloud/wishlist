@@ -126,7 +126,7 @@ jobs:
   # set as complete "find" invocations, one per line. task lint:license
   # keeps the same invocation for local development, kept in step by hand.
   license:
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-license.yaml@91979cf4cff86d00ebee28dfaf6e3b452aaeb1a9  # v0.2.2
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-license.yaml@a798b963d20b239bec48c101af965e08fac36146  # v0.3.0
     with:
       copyright-holder: Simon Ostendorf
       year: "2026"
@@ -302,4 +302,4 @@ jobs:
       - run: task test:helm
 
   renovate-config:
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate-config.yaml@91979cf4cff86d00ebee28dfaf6e3b452aaeb1a9  # v0.2.2
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate-config.yaml@a798b963d20b239bec48c101af965e08fac36146  # v0.3.0
