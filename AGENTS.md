@@ -82,9 +82,4 @@ Apache-2.0, like the other `ostendorf-cloud` repositories. See `LICENSE`.
 
 ## Deviations
 
-- Every reusable workflow call to `ostendorf-cloud/workflows` (`dco`, `renovate`,
-  `renovate-config`, `license`) is pinned at the commit behind its `v0.2.2` tag, the newest
-  tag that repository has cut: it has not cut a floating `v0` major tag yet. Repoint at `v0`
-  once it exists. `license` is pinned at `v0.2.2` here even though govue itself still calls
-  that reusable workflow at `v0.1.0`; `v0.2.2` is this repository's own current pin for every
-  other call into the same repository, kept consistent rather than mixed.
+- None.
