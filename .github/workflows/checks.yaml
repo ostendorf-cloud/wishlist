@@ -119,14 +119,11 @@ jobs:
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785  # v5.2.8
       - run: task lint:secrets
 
-  # ostendorf-cloud/workflows has not cut a floating v0 tag yet (verified: its
-  # newest tag is v0.2.2), so this calls the exact tag like every other
-  # reusable workflow call in this repository; see AGENTS.md's Deviations.
   # The shared reusable workflow pins addlicense itself and takes the file
   # set as complete "find" invocations, one per line. task lint:license
   # keeps the same invocation for local development, kept in step by hand.
   license:
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-license.yaml@91979cf4cff86d00ebee28dfaf6e3b452aaeb1a9  # v0.2.2
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-license.yaml@v0
     with:
       copyright-holder: Simon Ostendorf
       year: "2026"
@@ -302,4 +299,4 @@ jobs:
       - run: task test:helm
 
   renovate-config:
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate-config.yaml@91979cf4cff86d00ebee28dfaf6e3b452aaeb1a9  # v0.2.2
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate-config.yaml@v0
