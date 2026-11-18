@@ -30,10 +30,20 @@ helm pull oci://ghcr.io/ostendorf-cloud/charts/wishlist --version <version>
 
 ## Secrets
 
-This milestone's binary reads no secret-shaped configuration, so this chart creates and
-references none. A later milestone that adds OIDC login, an object store or a database
-introduces an `existingSecret` block the same way `ostendorf-tech`'s own chart does: read
-from a `Secret` the installer already has, never created from plaintext values here.
+The database password is read from a `Secret` the installer already has, never created from
+plaintext values here. `database.existingSecret.name` and `database.existingSecret.passwordKey`
+name it. The chart mounts the key as a file and passes `DB_PASSWORD_FILE`, so the password is
+never an environment value. The rest of the connection (`database.host`, `port`, `name`,
+`user`, `sslMode`, `maxConns`, `connectTimeout`) is plain values; the defaults assume a
+CloudNativePG cluster named `wishlist-postgres`, bootstrapped without custom names: host
+`wishlist-postgres-rw`, database and role `app`, password in the Secret
+`wishlist-postgres-app` under the key `password`. Set the values when the cluster differs. The
+chart creates no database. `database.sslMode` defaults to `require`, which encrypts and does not
+verify the server certificate: verifying it (`verify-full`) needs a root certificate setting
+that the service does not have yet.
+
+`/readyz` reports unready while the database is unreachable or the schema is not applied
+yet, so a pod without a database receives no traffic. `/healthz` does not depend on it.
 
 ## Health, readiness and metrics
 

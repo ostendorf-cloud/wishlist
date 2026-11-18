@@ -109,10 +109,21 @@ tasks:
     cmds:
       - go build -o bin/wishlist ./cmd/wishlist
 
+  # The store tests need a real PostgreSQL, whose URL comes from
+  # WISHLIST_TEST_DATABASE_URL (see internal/dbtest). CI sets it through a
+  # service container. Locally, without it, those tests skip, so the target
+  # says so before it runs: a green result then does not cover the database.
+  # With CI=true and no URL the tests fail instead of skipping.
   test:go:
-    desc: Go test
+    desc: Go test, including the PostgreSQL store tests when WISHLIST_TEST_DATABASE_URL is set
     deps: [web:build]
     cmds:
+      - |
+        if [ -z "${WISHLIST_TEST_DATABASE_URL:-}" ]; then
+          echo "WARNING: WISHLIST_TEST_DATABASE_URL is not set." >&2
+          echo "WARNING: the tests against a real PostgreSQL will be SKIPPED, not run." >&2
+          echo "WARNING: start one with 'docker compose up -d postgres' and see AGENTS.md." >&2
+        fi
       - go test -race -count=1 ./...
 
   check:govue-version:

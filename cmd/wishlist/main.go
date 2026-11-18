@@ -45,6 +45,19 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The pool is built at once and connects on first use. The schema is
+	// applied in the background, retrying until the database is there, and
+	// /readyz stays unready until it is.
+	db, waitMigration, err := startDatabase(ctx, cfg.Database, logger, checks)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		stop()
+		waitMigration()
+		db.Close()
+	}()
+
 	return httpserver.RunAdmin(ctx, httpserver.Config{
 		Addr:    cfg.Addr,
 		Handler: handler,

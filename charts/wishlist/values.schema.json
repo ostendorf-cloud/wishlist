@@ -25,6 +25,30 @@
         "name": { "type": "string" }
       }
     },
+    "database": {
+      "type": "object",
+      "required": ["host", "port", "name", "user", "sslMode", "maxConns", "connectTimeout", "existingSecret"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "name": { "type": "string", "minLength": 1 },
+        "user": { "type": "string", "minLength": 1 },
+        "sslMode": {
+          "type": "string",
+          "enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]
+        },
+        "maxConns": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "connectTimeout": { "type": "string", "minLength": 2 },
+        "existingSecret": {
+          "type": "object",
+          "required": ["name", "passwordKey"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "passwordKey": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "podAnnotations": { "type": "object" },
     "podLabels": { "type": "object" },
     "podSecurityContext": { "type": "object" },

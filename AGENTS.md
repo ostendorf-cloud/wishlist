@@ -10,8 +10,12 @@ The global baseline already applies here and is not repeated below.
   `dist/` (the built SPA, written by `task web:build`). It sits under `cmd/` rather than
   `internal/` because `go:embed` resolves relative to the file holding the directive.
 - `internal/config` loads and validates the service's own environment once, aggregated into
-  one error. There is no secret-shaped variable yet: no OIDC, no database and no object
-  store exist in this milestone.
+  one error. Every secret-shaped variable has a `_FILE` twin (`DB_PASSWORD` or
+  `DB_PASSWORD_FILE`).
+- `internal/store` is the whole database access: a pgx pool, the embedded migrations in
+  `migrations/` applied at startup, `owner.go` (`OwnerStore`) and `guest.go` (`GuestStore`).
+  See "The store boundary".
+- `internal/dbtest` gives a test its own database on a real PostgreSQL, see "Store tests".
 - `internal/depsync` checks that `go.mod` and `web/package.json` pin the same govue version,
   and that `web/pnpm-lock.yaml` still resolves govue's Vue package to its `/web`
   subdirectory; see "govue's two halves move together" below.
@@ -41,6 +45,92 @@ pnpm git dependency must always name the same tag: a mismatch means this reposit
 half of a govue release and not the other half, silently. `task check:govue-version`
 (`internal/depsync`) enforces this, the same way `ostendorf.tech` does.
 
+## The store boundary
+
+The store has two sides that share only the pool. `Core` owns `Open`, `Close`, `Ping` and
+`Migrate`, and hands out `OwnerStore` (`Owners()`, all methods in `owner.go`) and
+`GuestStore` (`Guests()`, all methods in `guest.go`). Only `guest.go` may name the
+`reservations` table, and the comments the guests write are there too. A handler for the
+owner must be given an `OwnerStore` and nothing else: only then does the compiler stop it
+from calling a guest method. That is true once the wiring passes an `OwnerStore`. The handler
+layer test of ADR 0001 must forbid any reference to `GuestStore`, `Core.Guests` and `Core` in
+an owner handler. `boundary_test.go` needs no database and runs everywhere. Read it for what
+it is: a guard against accidents by a contributor, not against a determined one. The real
+defence is the handler layer review and the code review. It checks:
+
+- every constant string of the other `.go` files, evaluated with `go/types`: literals, named
+  constants, constants from another file or from `guest.go`, constant `+` expressions of
+  them however far apart the parts are, and package level string variables initialised with
+  such an expression, also from `guest.go`. Case insensitive, escapes decoded.
+- the `U&"` identifier spelling, catalog queries (`pg_stat`, `pg_class`, `pg_catalog`,
+  `information_schema` and a few more) and SQL that builds SQL (`query_to_xml`,
+  `cursor_to_xml`, `ts_stat`, `xpath_table`, `dblink`, `execute`, `do $` and a few more) in
+  those strings.
+- imports: the other files may import only the standard library, pgx and `internal/config`,
+  never `"C"`, because the constants of any other package cannot be evaluated and a cgo
+  preamble is C source.
+- files are attributed by their real name: a `//line guest.go:1` directive does not exempt
+  a file.
+- every other file in the store tree, of any extension and any case, outside `migrations/`,
+  and every `_test.go` file a `go:embed` names.
+- `migrations/`: only `NNNN_name.sql` files, with no catalog query and no dynamic SQL. The
+  statements are cut and the comments removed by a reader that knows single, `E`, double and
+  dollar quoted text, so `--` or `/*` inside a string hides nothing. A
+  statement that mentions the table has to be its own `create table`, an index on it or an
+  `alter table` of it that does not rename it, move its schema, inherit or attach a
+  partition. A view, function, rule, trigger or another table's foreign key over it fails.
+  The current migration needs none of the forbidden constructs, and a later one that does
+  has to change the test in review.
+- that each side's methods stay in their own file, the two types share no method, and no
+  file other than `store.go` mentions the other side's type, `Guests`/`Owners` or a guest
+  method. `guest.go` declares no package level function, only methods of `GuestStore`.
+
+What it does not catch:
+
+- a name built when the program runs: `fmt.Sprintf`, `strings.ReplaceAll`, a rune slice,
+  a function result, a package level variable initialised by a call, a struct tag read
+  through `reflect`.
+- a name built from local variables (`x := "reserv"; x + "ations"`, `x += "ations"` in a
+  function, a package variable `+=` in `init()`): only package level declarations are
+  evaluated.
+- a name split inside an embedded template or a `.s` file, and a quoted `go:embed` pattern
+  that contains a space.
+- a constant of an allowed package changed to spell the name.
+- a way to find the table through the database that the marker lists do not name:
+  `alter table reservations set (...)`, `owner to`, `create publication ... for all tables`,
+  `pg_sequences` (which leaks only the global reservation count).
+- the gaps of the side check: an unexported guest method, a type alias for `GuestStore`
+  declared in `store.go`, a call by reflection on the method name.
+- whether a migration object that does not mention the table is harmless.
+
+No static test can close those. The handler layer review and the code review cover them.
+A new store file that needs reservations is a design change, not a test change: see
+`docs/adr/0001-blind-reservations.md`.
+
+Each migration runs in one transaction with its bookkeeping row, so `create index
+concurrently` cannot be a migration. Extend the runner first. The password from `DB_PASSWORD`
+or `DB_PASSWORD_FILE` is whitespace trimmed by govue's `envconf`, from the variable and from
+the file alike.
+
+## Store tests
+
+The tests against a real PostgreSQL (`internal/store/db_test.go`,
+`cmd/wishlist/database_test.go`) read the server's URL from `WISHLIST_TEST_DATABASE_URL`, for
+example `postgres://wishlist:dev-password-not-real@127.0.0.1:5432/postgres?sslmode=disable`.
+The role needs `CREATEDB`: each test creates and drops a database of its own.
+
+```sh
+docker compose up -d postgres
+export WISHLIST_TEST_DATABASE_URL='postgres://wishlist:dev-password-not-real@127.0.0.1:5432/postgres?sslmode=disable'
+task test:go
+```
+
+Without the variable those tests skip with a message naming it, and `task test:go` prints a
+warning before it runs. With `CI` set they fail instead of skipping. The `test` job in
+`.github/workflows/checks.yaml` provides a PostgreSQL service container and the variable.
+There is no fake database: a fake is used only for the client's error paths, by pointing
+the real client at a closed port.
+
 ## Verify before committing
 
 ```sh
@@ -56,14 +146,13 @@ This repository rewrites the existing `old_wishlist` service, a Go application w
 server-rendered templates, into a Go API with a Vue SPA on govue, so it looks and behaves
 like the other `ostendorf-cloud` applications. This milestone is the scaffold alone: the
 embedded SPA shell and the Go entry point serving it, with health, readiness and metrics on
-govue's admin listener. Left out, tracked as later milestones:
+govue's admin listener, plus the PostgreSQL schema and its store (no HTTP surface on top of
+it yet). Left out, tracked as later milestones:
 
 - owner login through OIDC
-- lists and wishes
+- the HTTP API for lists and wishes
 - images, kept in an object store
-- share tokens a guest uses to reach a list without an account
-- guests reserving and releasing a wish
-- comments, between guests and from a guest to the owner
+- the HTTP API for share tokens, reserving and comments
 - two languages
 - link previews when a wish is imported from a product link
 
@@ -73,8 +162,7 @@ its own test proving it, the way `old_wishlist`'s own blind test did. Importing 
 link is also planned to improve on the rewrite: a product link from a large shop should yield
 a usable title, picture and price, which `old_wishlist` did not do.
 
-None of OIDC, a database, an object store client or a migration exists in this repository
-yet.
+Neither OIDC nor an object store client exists in this repository yet.
 
 ## License
 
