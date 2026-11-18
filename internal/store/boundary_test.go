@@ -17,28 +17,47 @@ package store
 //   - every constant string expression of the non guest .go files, evaluated
 //     with go/types: literals, named constants, constants defined in another
 //     file or in guest.go, and any constant "+" expression of them, however far
-//     apart the parts are. Escapes are decoded, raw strings are read as they
-//     are. The match is case insensitive and on the substring, so quoted,
-//     schema qualified and prefixed spellings fall under it.
+//     apart the parts are. Package level string variables with an initialiser
+//     that is such an expression count the same, wherever they are used, also
+//     when they are declared in guest.go. Escapes are decoded, raw strings are
+//     read as they are. The match is case insensitive and on the substring, so
+//     quoted, schema qualified and prefixed spellings fall under it.
 //   - the SQL identifier spelling U&"..." in those strings, which can write the
 //     name with escapes.
 //   - catalog and metadata queries in those strings (pg_stat, pg_class,
-//     pg_catalog, information_schema and a few more), which can find the table
-//     without naming it.
+//     pg_catalog, information_schema and a few more), and the functions that run
+//     a query given as a string (query_to_xml, cursor_to_xml, execute, do $),
+//     which can find or build the table name inside the SQL.
+//   - imports: a non guest file may import only the standard library, pgx and
+//     internal/config. A constant of any other package cannot be evaluated here,
+//     so the import itself is the violation.
 //   - every other file in the store tree, of any extension and any case, outside
-//     migrations/: scanned as text for the name and for the same two things.
+//     migrations/: scanned as text for the name and for the same things. A _test.go
+//     file is skipped unless a go:embed directive names it.
 //   - migrations/: only files named NNNN_name.sql may be there. Every statement
 //     that mentions the table has to be its own create table, an index on it or
-//     an alter table of it. A view, function, rule, trigger, policy, or another
-//     table's foreign key over the table is a violation, and so is dynamic SQL
-//     (do, execute), which cannot be read.
+//     an alter table of it that does not rename it, move it to another schema,
+//     make it inherit or attach a partition. A view, function, rule, trigger,
+//     policy, or another table's foreign key over the table is a violation, and
+//     so is dynamic SQL (do, execute) and a catalog query, which cannot be read.
+//   - sides: no non guest file except store.go mentions GuestStore, Guests or a
+//     guest method, and guest.go never mentions OwnerStore or Owners.
 //
-// What it does NOT catch: a name built when the program runs, for example with
-// fmt.Sprintf, strings.ReplaceAll, a rune slice or a function result. A static
-// test cannot see those. The review of the handler layer and the code review
-// cover them, and the type split keeps an owner handler away from guest
-// methods in the first place. It also cannot prove that a migration object
-// which does not mention the table is harmless.
+// What it does NOT catch:
+//
+//   - a name built when the program runs: fmt.Sprintf, strings.ReplaceAll, a
+//     rune slice, a function result, a package level variable initialised by a
+//     call. No static test can see those.
+//   - a constant of an allowlisted package that has been changed to spell the
+//     name: the allowlist is the review point.
+//   - a name an owner query finds through the database in a way the markers
+//     above do not list.
+//   - a migration object that does not mention the table and is harmless or not.
+//
+// Review of the handler layer and code review cover what is left. The type split
+// keeps an owner handler away from guest methods only once the wiring passes an
+// OwnerStore: the handler layer test (docs/adr/0001-blind-reservations.md) must
+// forbid any reference to GuestStore, Core.Guests and Core in an owner handler.
 
 import (
 	"fmt"
@@ -73,6 +92,29 @@ var catalogMarkers = []string{
 	"pg_policy", "pg_get_", "regclass",
 }
 
+// dynamicMarkers are the ways to run, or build, a query inside a query: the
+// table name can then be assembled in SQL where no Go constant shows it.
+var dynamicMarkers = []string{
+	"query_to_xml", "cursor_to_xml", "table_to_xml", "schema_to_xml", "database_to_xml",
+	"dblink", "execute", "do $", "do$",
+}
+
+// forbiddenAlter are the parts of an alter table that change what the table is
+// called, where it lives or what it is part of. After one of them a later
+// query can reach the table without the name.
+var forbiddenAlter = []string{"rename", "set schema", "inherit", "attach partition", "detach partition"}
+
+// allowedImports says whether a non guest file may import a package: the
+// standard library (no dot in the first path element), pgx and the config.
+func allowedImport(path string) bool {
+	first, _, _ := strings.Cut(path, "/")
+	if !strings.Contains(first, ".") {
+		return true
+	}
+	return strings.HasPrefix(path, "github.com/jackc/pgx/v5") ||
+		path == "github.com/ostendorf-cloud/wishlist/internal/config"
+}
+
 // migrationName is the only shape a file in migrations/ may have.
 var migrationName = regexp.MustCompile(`^[0-9]{4}_[a-z0-9_]+\.sql$`)
 
@@ -95,7 +137,8 @@ type scan struct {
 // forbiddenText says what is wrong with a string outside guest.go and
 // migrations/, or an empty list.
 func forbiddenText(text string) []string {
-	lowered := strings.ToLower(text)
+	// Whitespace collapsed, so "do   $$" and a line break do not hide a marker.
+	lowered := strings.Join(strings.Fields(strings.ToLower(text)), " ")
 	var reasons []string
 	if strings.Contains(lowered, guestTable) {
 		reasons = append(reasons, "names the "+guestTable+" table")
@@ -108,6 +151,11 @@ func forbiddenText(text string) []string {
 			reasons = append(reasons, "queries the catalog ("+marker+"), which can find the table without naming it")
 		}
 	}
+	for _, marker := range dynamicMarkers {
+		if strings.Contains(lowered, marker) {
+			reasons = append(reasons, "runs or builds SQL inside SQL ("+marker+"), which can assemble the table name")
+		}
+	}
 	return reasons
 }
 
@@ -115,6 +163,7 @@ func forbiddenText(text string) []string {
 func checkBoundary(root string) (scan, error) {
 	var result scan
 	goFiles := map[string][]string{} // directory to its non test .go files
+	var testFiles []string
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -137,6 +186,8 @@ func checkBoundary(root string) (scan, error) {
 			return filepath.SkipDir
 		}
 		if strings.HasSuffix(rel, "_test.go") {
+			// Skipped for now: it is read below when a go:embed names it.
+			testFiles = append(testFiles, path)
 			return nil
 		}
 		if filepath.Ext(rel) == ".go" {
@@ -160,6 +211,27 @@ func checkBoundary(root string) (scan, error) {
 		return scan{}, err
 	}
 
+	// A test file is not compiled into the binary, unless a go:embed names it:
+	// then its text ships and can be read as a query.
+	embedded, err := embeddedFiles(goFiles)
+	if err != nil {
+		return scan{}, err
+	}
+	for _, path := range testFiles {
+		if !embedded[path] {
+			continue
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return scan{}, err
+		}
+		rel, _ := filepath.Rel(root, path)
+		result.files = append(result.files, rel)
+		for _, reason := range forbiddenText(string(source)) {
+			result.violations = append(result.violations, rel+": embedded test file "+reason)
+		}
+	}
+
 	for dir, paths := range goFiles {
 		found, err := checkGoDir(root, paths)
 		if err != nil {
@@ -175,6 +247,43 @@ func checkBoundary(root string) (scan, error) {
 	slices.Sort(result.files)
 	slices.Sort(result.violations)
 	return result, nil
+}
+
+var embedDirective = regexp.MustCompile(`(?m)^//go:embed[ \t]+(.+)$`)
+
+// embeddedFiles returns every file a go:embed directive of the given Go files
+// names, directories expanded, as a set of paths.
+func embeddedFiles(goFiles map[string][]string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for dir, paths := range goFiles {
+		for _, p := range paths {
+			source, err := os.ReadFile(p)
+			if err != nil {
+				return nil, err
+			}
+			for _, m := range embedDirective.FindAllStringSubmatch(string(source), -1) {
+				for _, pattern := range strings.Fields(m[1]) {
+					pattern = strings.Trim(strings.TrimPrefix(pattern, "all:"), "\"`")
+					matches, err := filepath.Glob(filepath.Join(dir, pattern))
+					if err != nil {
+						return nil, err
+					}
+					for _, match := range matches {
+						err := filepath.WalkDir(match, func(path string, entry fs.DirEntry, err error) error {
+							if err == nil && !entry.IsDir() {
+								out[path] = true
+							}
+							return err
+						})
+						if err != nil {
+							return nil, err
+						}
+					}
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // stubImporter gives every import an empty package. The checker then reports
@@ -196,17 +305,30 @@ var _ types.Importer = stubImporter{}
 func checkGoDir(root string, paths []string) ([]string, error) {
 	fset := token.NewFileSet()
 	var files []*ast.File
+	var out []string
 	for _, p := range paths {
 		parsed, err := parser.ParseFile(fset, p, nil, 0)
 		if err != nil {
 			return nil, err
 		}
 		files = append(files, parsed)
+
+		// A constant of a package that is not type checked here cannot be
+		// evaluated, so a package outside the allowlist is the violation.
+		if rel, err := filepath.Rel(root, p); err == nil && rel != guestFile {
+			for _, imp := range parsed.Imports {
+				if path := strings.Trim(imp.Path.Value, "\"`"); !allowedImport(path) {
+					out = append(out, fmt.Sprintf("%s: imports %s: its constants cannot be evaluated, "+
+						"review it and add it to allowedImport", rel, path))
+				}
+			}
+		}
 	}
 
 	info := &types.Info{
 		Types: map[ast.Expr]types.TypeAndValue{},
 		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
 	}
 	conf := types.Config{
 		Importer:    stubImporter{},
@@ -217,8 +339,61 @@ func checkGoDir(root string, paths []string) ([]string, error) {
 	// failed in ParseFile.
 	_, _ = conf.Check("store", fset, files, info)
 
+	// Package level string variables with an initialiser made of constants and
+	// other such variables count as constants: they are what a guest.go "var"
+	// holding the table name looks like. A variable assigned somewhere else is
+	// still read as its initialiser, which errs on the strict side.
+	varValue := map[types.Object]string{}
+	var eval func(e ast.Expr, depth int) (string, bool)
+	eval = func(e ast.Expr, depth int) (string, bool) {
+		if depth > 8 {
+			return "", false
+		}
+		if tv, ok := info.Types[e]; ok && tv.Value != nil && tv.Value.Kind() == constant.String {
+			return constant.StringVal(tv.Value), true
+		}
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			return eval(x.X, depth+1)
+		case *ast.Ident:
+			v, ok := varValue[info.Uses[x]]
+			return v, ok
+		case *ast.BinaryExpr:
+			if x.Op != token.ADD {
+				return "", false
+			}
+			left, lok := eval(x.X, depth+1)
+			right, rok := eval(x.Y, depth+1)
+			return left + right, lok && rok
+		}
+		return "", false
+	}
+	for range 6 { // a variable may depend on one declared later
+		for _, f := range files {
+			for _, decl := range f.Decls {
+				gen, ok := decl.(*ast.GenDecl)
+				if !ok || gen.Tok != token.VAR {
+					continue
+				}
+				for _, spec := range gen.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					for i, name := range vs.Names {
+						if i >= len(vs.Values) {
+							continue
+						}
+						if v, ok := eval(vs.Values[i], 0); ok {
+							varValue[info.Defs[name]] = v
+						}
+					}
+				}
+			}
+		}
+	}
+
 	seen := map[string]bool{}
-	var out []string
 	report := func(pos token.Pos, value string) {
 		position := fset.Position(pos)
 		rel, err := filepath.Rel(root, position.Filename)
@@ -237,6 +412,10 @@ func checkGoDir(root string, paths []string) ([]string, error) {
 	for expr, tv := range info.Types {
 		if tv.Value != nil && tv.Value.Kind() == constant.String {
 			report(expr.Pos(), constant.StringVal(tv.Value))
+			continue
+		}
+		if value, ok := eval(expr, 0); ok {
+			report(expr.Pos(), value)
 		}
 	}
 	for ident, obj := range info.Defs {
@@ -295,6 +474,9 @@ func migrationViolations(sql string) []string {
 			out = append(out, "dynamic SQL (do, execute) cannot be checked: "+clip(statement))
 		case strings.Contains(statement, `u&"`):
 			out = append(out, `a U&" identifier can spell the table name with escapes: `+clip(statement))
+		case mentionsAny(statement, catalogMarkers) || mentionsAny(statement, dynamicMarkers):
+			out = append(out, "a catalog query or a query built inside SQL can find the table without naming it: "+
+				clip(statement))
 		case strings.Contains(unquoted, guestTable) && !allowedTableStatement(statement):
 			out = append(out, "a statement other than the table's own create table, an index on it or an alter table of it "+
 				"mentions it: "+clip(statement))
@@ -303,7 +485,15 @@ func migrationViolations(sql string) []string {
 	return out
 }
 
+func mentionsAny(text string, markers []string) bool {
+	return slices.ContainsFunc(markers, func(m string) bool { return strings.Contains(text, m) })
+}
+
 func allowedTableStatement(statement string) bool {
+	if strings.HasPrefix(statement, "alter table reservations ") && mentionsAny(statement, forbiddenAlter) {
+		// A rename or a move makes the table reachable under another name.
+		return false
+	}
 	return slices.ContainsFunc(allowedTableStatements, func(re *regexp.Regexp) bool { return re.MatchString(statement) })
 }
 
@@ -479,6 +669,149 @@ func TestMethodsStayInTheirFiles(t *testing.T) {
 	}
 }
 
+// checkSides reads the non test .go files of dir and reports every place a
+// side reaches over to the other: a file other than guest.go and store.go that
+// mentions GuestStore, Guests or the name of a guest method, and guest.go
+// mentioning OwnerStore or Owners. The types already keep the two method sets
+// apart, but both are in one package: (&GuestStore{pool: s.pool}) in owner.go
+// compiles. store.go is where Core hands the two sides out.
+func checkSides(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	parsed := map[string]*ast.File{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".go" || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			return nil, err
+		}
+		parsed[name] = f
+	}
+
+	var guestMethods []string
+	if f, ok := parsed[guestFile]; ok {
+		for _, decl := range f.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv != nil && len(fn.Recv.List) > 0 &&
+				receiverName(fn.Recv.List[0].Type) == "GuestStore" && fn.Name.IsExported() {
+				guestMethods = append(guestMethods, fn.Name.Name)
+			}
+		}
+	}
+
+	var out []string
+	for name, f := range parsed {
+		var forbidden []string
+		switch name {
+		case "store.go":
+			continue
+		case guestFile:
+			forbidden = []string{"OwnerStore", "Owners"}
+		default:
+			forbidden = []string{"GuestStore", "Guests"}
+		}
+		ast.Inspect(f, func(node ast.Node) bool {
+			switch n := node.(type) {
+			case *ast.Ident:
+				if slices.Contains(forbidden, n.Name) {
+					out = append(out, fmt.Sprintf("%s:%d: mentions %s, which belongs to the other side",
+						name, fset.Position(n.Pos()).Line, n.Name))
+				}
+			case *ast.SelectorExpr:
+				if name != guestFile && slices.Contains(guestMethods, n.Sel.Name) {
+					out = append(out, fmt.Sprintf("%s:%d: calls the guest method %s",
+						name, fset.Position(n.Sel.Pos()).Line, n.Sel.Name))
+				}
+			}
+			return true
+		})
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+func TestTheSidesDoNotReachAcrossFiles(t *testing.T) {
+	t.Parallel()
+
+	found, err := checkSides(".")
+	if err != nil {
+		t.Fatalf("check sides: %v", err)
+	}
+	for _, f := range found {
+		t.Error(f)
+	}
+}
+
+func TestCheckSidesCatchesEveryCrossReference(t *testing.T) {
+	t.Parallel()
+
+	const guest = "package s\ntype GuestStore struct{}\nfunc (s *GuestStore) Reserve() {}\nfunc (s *GuestStore) GuestWishes() {}\n"
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  int
+	}{
+		{"owner file builds a guest store", map[string]string{
+			guestFile: guest,
+			"owner.go": "package s\ntype OwnerStore struct{ pool int }\n" +
+				"func (s *OwnerStore) X() { (&GuestStore{}).GuestWishes() }\n",
+		}, 2},
+		{"owner file calls a guest method on a value", map[string]string{
+			guestFile:  guest,
+			"owner.go": "package s\ntype OwnerStore struct{}\nfunc (s *OwnerStore) X(g interface{ Reserve() }) { g.Reserve() }\n",
+		}, 1},
+		{"owner file asks Core for the guests", map[string]string{
+			guestFile:  guest,
+			"owner.go": "package s\ntype OwnerStore struct{ c interface{ Guests() int } }\nfunc (s *OwnerStore) X() { s.c.Guests() }\n",
+		}, 1},
+		{"another file reaches over", map[string]string{
+			guestFile:    guest,
+			"helpers.go": "package s\nvar g *GuestStore\n",
+		}, 1},
+		{"guest file builds an owner store", map[string]string{
+			guestFile: guest + "func f() { _ = &OwnerStore{} }\n",
+		}, 1},
+		{"guest file asks for the owners", map[string]string{
+			guestFile: guest + "func f(c interface{ Owners() int }) { c.Owners() }\n",
+		}, 1},
+		{"store.go hands both out", map[string]string{
+			guestFile:  guest,
+			"store.go": "package s\ntype Core struct{}\nfunc (c *Core) Guests() *GuestStore { return &GuestStore{} }\nfunc (c *Core) Owners() *OwnerStore { return nil }\n",
+		}, 0},
+		{"a field named like a guest method is fine as an identifier", map[string]string{
+			guestFile:  guest,
+			"owner.go": "package s\nfunc f() { Reserve := 1; _ = Reserve }\n",
+		}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			for name, content := range tc.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+					t.Fatalf("write fixture: %v", err)
+				}
+			}
+			found, err := checkSides(dir)
+			if err != nil {
+				t.Fatalf("check sides: %v", err)
+			}
+			switch {
+			case tc.want == 0 && len(found) != 0:
+				t.Errorf("found %v, want nothing", found)
+			case tc.want > 0 && len(found) < tc.want:
+				t.Errorf("found %v, want at least %d", found, tc.want)
+			}
+		})
+	}
+}
+
 func receiverName(expr ast.Expr) string {
 	if star, ok := expr.(*ast.StarExpr); ok {
 		expr = star.X
@@ -576,7 +909,76 @@ func TestBoundaryCatchesEverySpelling(t *testing.T) {
 			"migrations/0001_a.sql": okMigration + "create view v as select * from U&\"\\0072eservations\";\n",
 		}, 1},
 
+		// Package level variables, imports, SQL inside SQL, embedded tests,
+		// catalogs and renames in migrations.
+		{"package variable in the guest file used elsewhere", map[string]string{
+			guestFile: "package s\nvar guestTableName = \"reservations\"\n",
+			"a.go":    "package s\nvar q = \"select count(*) from \" + guestTableName\n",
+		}, 1},
+		{"package variables chained", map[string]string{
+			guestFile: "package s\nvar a = \"reserv\"\nvar b = a + \"ations\"\n",
+			"a.go":    "package s\nvar c = \"from \" + b\n",
+		}, 1},
+		{"package variable declared after its use", map[string]string{
+			"a.go": "package s\nvar q = \"from \" + t\nvar t = u + \"ations\"\nvar u = \"reserv\"\n",
+		}, 1},
+		{"package variable used on its own", map[string]string{
+			guestFile: "package s\nvar guestTableName = \"reservations\"\n",
+			"a.go":    "package s\nfunc f(run func(string)) { run(guestTableName) }\n",
+		}, 1},
+		{"constant from another package", map[string]string{
+			"a.go": "package s\nimport \"example.com/sqlnames\"\nvar q = sqlnames.T + \"ations\"\n",
+		}, 1},
+		{"query_to_xml builds the name in SQL", map[string]string{
+			"a.go": "package s\nvar q = \"select query_to_xml('select * from ' || 'reserv' || 'ations', true, false, '')\"\n",
+		}, 1},
+		{"cursor_to_xml", map[string]string{"a.go": "package s\nvar q = \"select cursor_to_xml(c, 1, false, false, '')\"\n"}, 1},
+		{"execute in a string", map[string]string{"a.go": "package s\nvar q = \"execute stmt\"\n"}, 1},
+		{"do block in a string", map[string]string{"a.go": "package s\nvar q = \"do $$ begin null; end $$\"\n"}, 1},
+		{"embedded test file", map[string]string{
+			"a.go":           "package s\nimport _ \"embed\"\n//go:embed q/peek_test.go\nvar peek string\n",
+			"q/peek_test.go": "package q\nvar x = \"select * from reservations\"\n",
+		}, 1},
+		{"embedded directory with a test file", map[string]string{
+			"a.go":           "package s\nimport _ \"embed\"\n//go:embed q\nvar peek string\n",
+			"q/peek_test.go": "package q\nvar x = \"select * from reservations\"\n",
+		}, 1},
+		{"view over a catalog in a migration", map[string]string{
+			"migrations/0001_a.sql": okMigration +
+				"create view wish_stats as select n_live_tup from pg_stat_user_tables where relname like 'reserv%';\n",
+		}, 1},
+		{"information_schema in a migration", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select * from information_schema.tables;\n",
+		}, 1},
+		{"rename of the table", map[string]string{
+			"migrations/0001_a.sql": okMigration + "alter table reservations rename to gifts;\n",
+		}, 1},
+		{"set schema of the table", map[string]string{
+			"migrations/0001_a.sql": okMigration + "alter table reservations set schema other;\n",
+		}, 1},
+		{"inherit", map[string]string{
+			"migrations/0001_a.sql": okMigration + "alter table reservations inherit parent;\n",
+		}, 1},
+		{"attach partition", map[string]string{
+			"migrations/0001_a.sql": okMigration + "alter table reservations attach partition p for values in (1);\n",
+		}, 1},
+		{"query_to_xml in a migration", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select query_to_xml('select 1', true, false, '');\n",
+		}, 1},
+
 		// Fine.
+		{"allowed imports", map[string]string{
+			"a.go": "package s\nimport (\n\t\"fmt\"\n\t\"github.com/jackc/pgx/v5\"\n\t\"github.com/jackc/pgx/v5/pgxpool\"\n" +
+				"\t\"github.com/ostendorf-cloud/wishlist/internal/config\"\n)\nvar _ = fmt.Sprint\n",
+		}, 0},
+		{"a test file nothing embeds is skipped", map[string]string{
+			"a.go":           "package s\nvar q = 1\n",
+			"q/peek_test.go": "package q\nvar x = \"select * from reservations\"\n",
+		}, 0},
+		{"a package variable that holds something else", map[string]string{
+			guestFile: "package s\nvar other = \"wishes\"\n",
+			"a.go":    "package s\nvar q = \"select * from \" + other\n",
+		}, 0},
 		{"table, index and comment in migrations", map[string]string{
 			"migrations/0001_a.sql": "-- reservations are the guests' business\n/* reservations */\n" + okMigration +
 				"alter table reservations add column x int;\ncreate unique index reservations_u on reservations (id);\n",

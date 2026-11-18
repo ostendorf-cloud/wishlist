@@ -49,27 +49,45 @@ half of a govue release and not the other half, silently. `task check:govue-vers
 
 The store has two sides that share only the pool. `Core` owns `Open`, `Close`, `Ping` and
 `Migrate`, and hands out `OwnerStore` (`Owners()`, all methods in `owner.go`) and
-`GuestStore` (`Guests()`, all methods in `guest.go`). A handler for the owner is given an
-`OwnerStore` and nothing else, so the compiler stops it from calling a guest method. Only
-`guest.go` may name the `reservations` table, and the comments the guests write are there
-too. `boundary_test.go` needs no database and runs everywhere. It checks:
+`GuestStore` (`Guests()`, all methods in `guest.go`). Only `guest.go` may name the
+`reservations` table, and the comments the guests write are there too. A handler for the
+owner must be given an `OwnerStore` and nothing else: only then does the compiler stop it
+from calling a guest method. That is true once the wiring passes an `OwnerStore`. The handler
+layer test of ADR 0001 must forbid any reference to `GuestStore`, `Core.Guests` and `Core` in
+an owner handler. `boundary_test.go` needs no database and runs everywhere. It checks:
 
 - every constant string of the other `.go` files, evaluated with `go/types`: literals, named
-  constants, constants from another file or from `guest.go`, and constant `+` expressions
-  of them, however far apart the parts are. Case insensitive, escapes decoded.
-- the `U&"` identifier spelling and catalog queries (`pg_stat`, `pg_class`, `pg_catalog`,
-  `information_schema` and a few more) in those strings.
-- every other file in the store tree, of any extension and any case, outside `migrations/`.
-- `migrations/`: only `NNNN_name.sql` files. A statement that mentions the table has to be
-  its own `create table`, an index on it or an `alter table` of it. A view, function, rule,
-  trigger or another table's foreign key over it, and dynamic SQL (`do`, `execute`), fail.
-- that each side's methods stay in their own file and the two types share no method.
+  constants, constants from another file or from `guest.go`, constant `+` expressions of
+  them however far apart the parts are, and package level string variables initialised with
+  such an expression, also from `guest.go`. Case insensitive, escapes decoded.
+- the `U&"` identifier spelling, catalog queries (`pg_stat`, `pg_class`, `pg_catalog`,
+  `information_schema` and a few more) and SQL that builds SQL (`query_to_xml`,
+  `cursor_to_xml`, `execute`, `do $`) in those strings.
+- imports: the other files may import only the standard library, pgx and `internal/config`,
+  because the constants of any other package cannot be evaluated.
+- every other file in the store tree, of any extension and any case, outside `migrations/`,
+  and every `_test.go` file a `go:embed` names.
+- `migrations/`: only `NNNN_name.sql` files, with no catalog query and no dynamic SQL. A
+  statement that mentions the table has to be its own `create table`, an index on it or an
+  `alter table` of it that does not rename it, move its schema, inherit or attach a
+  partition. A view, function, rule, trigger or another table's foreign key over it fails.
+  The current migration needs none of the forbidden constructs, and a later one that does
+  has to change the test in review.
+- that each side's methods stay in their own file, the two types share no method, and no
+  file other than `store.go` mentions the other side's type, `Guests`/`Owners` or a guest
+  method.
 
-It does not catch a name built when the program runs, for example with `fmt.Sprintf`,
-`strings.ReplaceAll` or a rune slice: no static test can. The handler layer review and the
-code review cover that, and the type split keeps owner handlers away from guest methods in
-the first place. A new store file that needs reservations is a design change, not a test
-change: see `docs/adr/0001-blind-reservations.md`.
+What it does not catch:
+
+- a name built when the program runs: `fmt.Sprintf`, `strings.ReplaceAll`, a rune slice,
+  a function result, a package level variable initialised by a call.
+- a constant of an allowed package changed to spell the name.
+- a way to find the table through the database that the marker lists do not name.
+- whether a migration object that does not mention the table is harmless.
+
+No static test can close those. The handler layer review and the code review cover them.
+A new store file that needs reservations is a design change, not a test change: see
+`docs/adr/0001-blind-reservations.md`.
 
 Each migration runs in one transaction with its bookkeeping row, so `create index
 concurrently` cannot be a migration. Extend the runner first. The password from `DB_PASSWORD`

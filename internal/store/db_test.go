@@ -664,6 +664,128 @@ func TestMoveWish(t *testing.T) {
 	})
 }
 
+// A second list, of the same owner and of another one, each with a wish.
+func otherLists(t *testing.T, f fixture) (sameOwner, otherOwner List, wishSame, wishOther Wish) {
+	t.Helper()
+
+	o := f.owners()
+	var err error
+	sameOwner, err = o.CreateList(t.Context(), f.owner.ID, ListInput{Title: "Second", ReserveOpen: true})
+	if err != nil {
+		t.Fatalf("CreateList() error = %v", err)
+	}
+	wishSame, err = o.CreateWish(t.Context(), f.owner.ID, sameOwner.ID, WishInput{Title: "Second wish", Quantity: 1})
+	if err != nil {
+		t.Fatalf("CreateWish() error = %v", err)
+	}
+	stranger, err := o.UpsertOwner(t.Context(), "subject-9", "carol", "", "")
+	if err != nil {
+		t.Fatalf("UpsertOwner() error = %v", err)
+	}
+	otherOwner, err = o.CreateList(t.Context(), stranger.ID, ListInput{Title: "Theirs", ReserveOpen: true})
+	if err != nil {
+		t.Fatalf("CreateList() error = %v", err)
+	}
+	wishOther, err = o.CreateWish(t.Context(), stranger.ID, otherOwner.ID, WishInput{Title: "Their wish", Quantity: 1})
+	if err != nil {
+		t.Fatalf("CreateWish() error = %v", err)
+	}
+	return sameOwner, otherOwner, wishSame, wishOther
+}
+
+// A guest holding one list's link must not reach a wish of another list by
+// passing that wish's id with their own list id.
+func TestGuestWritesRefuseAWishFromAnotherList(t *testing.T) {
+	c := newCore(t)
+	f := seed(t, c)
+	g := f.guests()
+	_, _, wishSame, wishOther := otherLists(t, f)
+
+	for name, wishID := range map[string]int64{"same owner's other list": wishSame.ID, "another owner's list": wishOther.ID} {
+		t.Run(name, func(t *testing.T) {
+			err := g.Reserve(t.Context(), f.list.ID, wishID, "guest-1", "Bob", StateReserved, 1, nil)
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("Reserve() = %v, want ErrNotFound", err)
+			}
+			err = g.AddGuestComment(t.Context(), f.list.ID, wishID, "guest-1", "Bob", "hello", VisibleToGuests)
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("AddGuestComment() = %v, want ErrNotFound", err)
+			}
+			if _, err := g.WishOnList(t.Context(), f.list.ID, wishID); !errors.Is(err, ErrNotFound) {
+				t.Errorf("WishOnList() = %v, want ErrNotFound", err)
+			}
+			if _, err := g.GuestWish(t.Context(), f.list.ID, wishID, "guest-1"); !errors.Is(err, ErrNotFound) {
+				t.Errorf("GuestWish() = %v, want ErrNotFound", err)
+			}
+		})
+	}
+
+	var rows int
+	if err := c.pool.QueryRow(t.Context(), "select (select count(*) from reservations) + (select count(*) from comments)").
+		Scan(&rows); err != nil || rows != 0 {
+		t.Errorf("%d reservation and comment rows after the refused writes, %v, want none", rows, err)
+	}
+}
+
+func TestWishOnList(t *testing.T) {
+	c := newCore(t)
+	f := seed(t, c)
+	g := f.guests()
+
+	wish, err := g.WishOnList(t.Context(), f.list.ID, f.wish.ID)
+	if err != nil || wish.ID != f.wish.ID || wish.Title != "Book" {
+		t.Fatalf("WishOnList() = %+v, %v, want the wish", wish, err)
+	}
+	if _, err := g.WishOnList(t.Context(), f.list.ID, f.wish.ID+999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("WishOnList(unknown wish) = %v, want ErrNotFound", err)
+	}
+	if _, err := g.WishOnList(t.Context(), f.list.ID+999, f.wish.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("WishOnList(wrong list) = %v, want ErrNotFound", err)
+	}
+	// An archived wish is not served to guests.
+	if err := f.owners().SetWishArchived(t.Context(), f.owner.ID, f.wish.ID, true); err != nil {
+		t.Fatalf("SetWishArchived() error = %v", err)
+	}
+	if _, err := g.WishOnList(t.Context(), f.list.ID, f.wish.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("WishOnList(archived wish) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestGuestCommentsHideCommentsOnArchivedWishes(t *testing.T) {
+	c := newCore(t)
+	f := seed(t, c)
+	ctx := t.Context()
+	g, o := f.guests(), f.owners()
+
+	second, err := o.CreateWish(ctx, f.owner.ID, f.list.ID, WishInput{Title: "Second", Quantity: 1})
+	if err != nil {
+		t.Fatalf("CreateWish() error = %v", err)
+	}
+	for _, id := range []int64{f.wish.ID, second.ID} {
+		if err := g.AddGuestComment(ctx, f.list.ID, id, "guest-1", "Bob", fmt.Sprintf("on %d", id), VisibleToGuests); err != nil {
+			t.Fatalf("AddGuestComment() error = %v", err)
+		}
+	}
+	if err := o.SetWishArchived(ctx, f.owner.ID, second.ID, true); err != nil {
+		t.Fatalf("SetWishArchived() error = %v", err)
+	}
+
+	comments, err := g.GuestComments(ctx, f.list.ID, "guest-1")
+	if err != nil {
+		t.Fatalf("GuestComments() error = %v", err)
+	}
+	if len(comments[f.wish.ID]) != 1 {
+		t.Errorf("comments on the live wish = %v, want one", comments[f.wish.ID])
+	}
+	if got := comments[second.ID]; len(got) != 0 {
+		t.Errorf("comments on the archived wish = %v, want none", got)
+	}
+	// A new comment on the archived wish is refused too.
+	if err := g.AddGuestComment(ctx, f.list.ID, second.ID, "guest-1", "Bob", "late", VisibleToGuests); !errors.Is(err, ErrNotFound) {
+		t.Errorf("AddGuestComment() on an archived wish = %v, want ErrNotFound", err)
+	}
+}
+
 func TestEventsSoon(t *testing.T) {
 	c := newCore(t)
 	f := seed(t, c)

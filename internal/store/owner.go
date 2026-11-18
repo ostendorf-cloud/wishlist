@@ -330,13 +330,15 @@ func (s *OwnerStore) MoveWish(ctx context.Context, ownerID, wishID int64, direct
 		}
 
 		// Read again under the lock: the position may have changed while this
-		// move waited for it.
+		// move waited for it. "no key update" is enough, only non key columns
+		// change, and it lets a guest's comment or reservation, which takes a
+		// key share lock on the wish, go through meanwhile.
 		var position int
 		var archived bool
 		err = tx.QueryRow(ctx, `
 			select position, archived from wishes
 			where id = $1 and list_id = $2
-			for update`, wishID, listID).Scan(&position, &archived)
+			for no key update`, wishID, listID).Scan(&position, &archived)
 		if err != nil {
 			return fmt.Errorf("move wish: %w", notFound(err))
 		}

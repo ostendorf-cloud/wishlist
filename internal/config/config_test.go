@@ -4,7 +4,9 @@
 package config
 
 import (
+	"encoding"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log/slog"
@@ -298,6 +300,23 @@ func TestDatabaseNeverPrintsItsPassword(t *testing.T) {
 			if strings.Contains(sb.String(), dummyPassword) {
 				t.Errorf("%s handler leaks the password logging the %s: %s", name, what, sb.String())
 			}
+		}
+	}
+
+	// MarshalText is what every text encoder reaches for: map keys, flags,
+	// TOML and YAML libraries. It has to be redacted on its own.
+	var marshaler encoding.TextMarshaler = cfg.Database
+	text, err := marshaler.MarshalText()
+	if err != nil || strings.Contains(string(text), dummyPassword) {
+		t.Errorf("MarshalText() = %q, %v, want it without the password", text, err)
+	}
+	for what, value := range map[string]any{"database": cfg.Database, "config": cfg} {
+		raw, err := xml.Marshal(value)
+		if err != nil {
+			t.Fatalf("xml.Marshal(%s) error = %v", what, err)
+		}
+		if strings.Contains(string(raw), dummyPassword) {
+			t.Errorf("xml.Marshal leaks the password of the %s: %s", what, raw)
 		}
 	}
 
