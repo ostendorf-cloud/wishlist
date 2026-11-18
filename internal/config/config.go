@@ -6,6 +6,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -63,6 +64,26 @@ func (d Database) GoString() string { return d.String() }
 // Format makes every fmt verb print String, including "%+v" and "%#v".
 func (d Database) Format(f fmt.State, _ rune) {
 	_, _ = fmt.Fprint(f, d.String())
+}
+
+// MarshalJSON keeps the password out of JSON. It matters when a whole Config
+// is logged through a JSON handler: slog's LogValuer applies only when a
+// Database is the attribute value itself, while a Database nested inside
+// another value reaches encoding/json, which would print every field.
+func (d Database) MarshalJSON() ([]byte, error) {
+	// plain has Database's fields and none of its methods, so this does not
+	// call MarshalJSON again.
+	type plain Database
+	p := plain(d)
+	if p.Password != "" {
+		p.Password = redacted
+	}
+	return json.Marshal(p)
+}
+
+// MarshalText keeps the password out of every other text encoding.
+func (d Database) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
 }
 
 // LogValue keeps the password out of structured logs.

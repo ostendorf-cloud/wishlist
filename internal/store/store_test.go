@@ -7,9 +7,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/ostendorf-cloud/wishlist/internal/config"
@@ -230,8 +233,10 @@ func TestMigrateFailsWithoutALeakWhileTheDatabaseIsUnreachable(t *testing.T) {
 	}
 }
 
-// MigrateUntilReady keeps retrying and stops with the context.
-func TestMigrateUntilReadyStopsWithItsContext(t *testing.T) {
+// MigrateUntilReady keeps retrying and stops with the context, also while it
+// waits between two attempts. The pause is an hour here: a loop that ignored
+// the context during the pause would hold the test until its own timeout.
+func TestMigrateUntilReadyStopsWithItsContextDuringThePause(t *testing.T) {
 	t.Parallel()
 
 	s, err := Open(t.Context(), unreachable(t))
@@ -239,10 +244,12 @@ func TestMigrateUntilReadyStopsWithItsContext(t *testing.T) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	defer s.Close()
+	s.pause = time.Hour
 
-	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
-	logger := slog.New(slog.DiscardHandler)
+	logs := &lockedBuffer{}
+	logger := slog.New(slog.NewTextHandler(logs, nil))
 
 	done := make(chan error, 1)
 	go func() { done <- s.MigrateUntilReady(ctx, logger) }()
@@ -253,7 +260,142 @@ func TestMigrateUntilReadyStopsWithItsContext(t *testing.T) {
 			t.Errorf("MigrateUntilReady() error = %v, want the context's deadline", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("MigrateUntilReady() did not stop when its context ended")
+		t.Fatal("MigrateUntilReady() did not stop when its context ended during the pause")
+	}
+	if !strings.Contains(logs.String(), "retry_in=1h0m0s") {
+		t.Errorf("the log does not show the configured pause:\n%s", logs.String())
+	}
+}
+
+// The pause grows between attempts and is capped.
+func TestMigrateUntilReadyRetriesMoreThanOnce(t *testing.T) {
+	t.Parallel()
+
+	s, err := Open(t.Context(), unreachable(t))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer s.Close()
+	s.pause = 20 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	logs := &lockedBuffer{}
+	_ = s.MigrateUntilReady(ctx, slog.New(slog.NewTextHandler(logs, nil)))
+
+	if n := strings.Count(logs.String(), "schema not applied yet"); n < 3 {
+		t.Errorf("MigrateUntilReady() tried %d times in a second with a 20ms pause, want at least 3", n)
+	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// The loader's own rules, on fixture file systems.
+func TestReadMigrations(t *testing.T) {
+	t.Parallel()
+
+	file := func(sql string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(sql)} }
+	cases := []struct {
+		name    string
+		fsys    fstest.MapFS
+		want    []string
+		wantErr string
+	}{
+		{"in order", fstest.MapFS{"m/0002_b.sql": file("b"), "m/0001_a.sql": file("a")}, []string{"0001_a.sql", "0002_b.sql"}, ""},
+		{"ignores other files", fstest.MapFS{"m/0001_a.sql": file("a"), "m/notes.txt": file("x"), "m/sub/0002_b.sql": file("b")}, []string{"0001_a.sql"}, ""},
+		{"gap", fstest.MapFS{"m/0001_a.sql": file("a"), "m/0003_c.sql": file("c")}, nil, "gap or a repeat at 0003_c.sql"},
+		{"repeat", fstest.MapFS{"m/0001_a.sql": file("a"), "m/0001_b.sql": file("b")}, nil, "gap or a repeat"},
+		{"starts at two", fstest.MapFS{"m/0002_a.sql": file("a")}, nil, "gap or a repeat at 0002_a.sql"},
+		{"version zero", fstest.MapFS{"m/0000_a.sql": file("a")}, nil, "no version number"},
+		{"not a number", fstest.MapFS{"m/abc_a.sql": file("a")}, nil, "no version number"},
+		{"no underscore", fstest.MapFS{"m/0001.sql": file("a")}, nil, "not named <version>_<name>.sql"},
+		{"missing directory", fstest.MapFS{"other/0001_a.sql": file("a")}, nil, "read migrations"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := readMigrations(tc.fsys, "m")
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("readMigrations() error = %v, want one containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("readMigrations() error = %v", err)
+			}
+			var names []string
+			for _, m := range got {
+				names = append(names, m.name)
+			}
+			if !slices.Equal(names, tc.want) {
+				t.Errorf("migrations = %v, want %v", names, tc.want)
+			}
+		})
+	}
+}
+
+// Input is checked before the database is asked, so these need no server: the
+// store's pool is nil and a query would panic.
+func TestGuestWritesRefuseBadInput(t *testing.T) {
+	t.Parallel()
+
+	g := &GuestStore{}
+	zero, negative, huge := int64(0), int64(-5), maxAmountCents+1
+
+	cases := []struct {
+		name string
+		run  func() error
+		want error
+	}{
+		{"reserve without a key", func() error { return g.Reserve(t.Context(), 1, 1, "", "n", StateReserved, 1, nil) }, ErrGuestKeyRequired},
+		{"reserve with an unknown state", func() error { return g.Reserve(t.Context(), 1, 1, "k", "n", "stolen", 1, nil) }, nil},
+		{"reserve quantity zero", func() error { return g.Reserve(t.Context(), 1, 1, "k", "n", StateReserved, 0, nil) }, ErrInvalidQuantity},
+		{"reserve quantity negative", func() error { return g.Reserve(t.Context(), 1, 1, "k", "n", StateReserved, -1, nil) }, ErrInvalidQuantity},
+		{"reserve quantity huge", func() error {
+			return g.Reserve(t.Context(), 1, 1, "k", "n", StateReserved, maxQuantity+1, nil)
+		}, ErrInvalidQuantity},
+		{"reserve amount zero", func() error { return g.Reserve(t.Context(), 1, 1, "k", "n", StateReserved, 1, &zero) }, ErrInvalidAmount},
+		{"reserve amount negative", func() error { return g.Reserve(t.Context(), 1, 1, "k", "n", StateReserved, 1, &negative) }, ErrInvalidAmount},
+		{"reserve amount huge", func() error { return g.Reserve(t.Context(), 1, 1, "k", "n", StateReserved, 1, &huge) }, ErrInvalidAmount},
+		{"comment without a key", func() error { return g.AddGuestComment(t.Context(), 1, 1, "", "n", "b", VisibleToGuests) }, ErrGuestKeyRequired},
+		{"comment with an unknown visibility", func() error { return g.AddGuestComment(t.Context(), 1, 1, "k", "n", "b", "world") }, nil},
+		{"release without a key", func() error { return g.Release(t.Context(), 1, 1, "") }, ErrNotFound},
+		{"delete comment without a key", func() error { return g.DeleteComment(t.Context(), 1, 1, "") }, ErrNotFound},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tc.run()
+			if err == nil {
+				t.Fatal("error = nil, want the input refused")
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Errorf("error = %v, want %v", err, tc.want)
+			}
+			if errors.Is(err, ErrTaken) {
+				t.Errorf("error = %v: a bad input is not a conflict, ErrTaken is for a real one", err)
+			}
+		})
 	}
 }
 

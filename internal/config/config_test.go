@@ -4,7 +4,9 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -283,10 +285,29 @@ func TestDatabaseNeverPrintsItsPassword(t *testing.T) {
 		}
 	}
 
-	var sb strings.Builder
-	logger := slog.New(slog.NewTextHandler(&sb, nil))
-	logger.Info("database", "config", cfg.Database)
-	if strings.Contains(sb.String(), dummyPassword) {
-		t.Errorf("slog output leaks the password: %s", sb.String())
+	// Both handlers, with the Database alone and with the whole Config: a
+	// Database nested in a Config does not go through LogValue.
+	handlers := map[string]func(io.Writer) slog.Handler{
+		"text": func(w io.Writer) slog.Handler { return slog.NewTextHandler(w, nil) },
+		"json": func(w io.Writer) slog.Handler { return slog.NewJSONHandler(w, nil) },
+	}
+	for name, newHandler := range handlers {
+		for what, value := range map[string]any{"database": cfg.Database, "config": cfg, "config pointer": &cfg} {
+			var sb strings.Builder
+			slog.New(newHandler(&sb)).Info("startup", "value", value)
+			if strings.Contains(sb.String(), dummyPassword) {
+				t.Errorf("%s handler leaks the password logging the %s: %s", name, what, sb.String())
+			}
+		}
+	}
+
+	for what, value := range map[string]any{"database": cfg.Database, "config": cfg} {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("Marshal(%s) error = %v", what, err)
+		}
+		if strings.Contains(string(raw), dummyPassword) {
+			t.Errorf("json.Marshal leaks the password of the %s: %s", what, raw)
+		}
 	}
 }

@@ -109,13 +109,17 @@ httpRoute:
 # The PostgreSQL connection. The chart never creates the database or its
 # credentials: the password is read from a Secret the installer already has.
 database:
-  # Defaults to the read-write Service CloudNativePG creates for a cluster
-  # named "wishlist-postgres" in this release's namespace.
+  # The defaults assume a CloudNativePG cluster named "wishlist-postgres" in
+  # this release's namespace, bootstrapped without custom owner or database
+  # names: its read-write Service is "<cluster>-rw", its database and owner
+  # are both "app", and its credentials are in the Secret "<cluster>-app".
+  # Change them when the cluster is named or bootstrapped otherwise.
   host: wishlist-postgres-rw
   port: 5432
-  name: wishlist
-  user: wishlist
-  # disable, allow, prefer, require, verify-ca or verify-full.
+  name: app
+  user: app
+  # disable, allow, prefer, require, verify-ca or verify-full. "require"
+  # encrypts the connection and does not verify the server certificate.
   sslMode: require
   # Pool size per pod, 1 to 100.
   maxConns: 10
@@ -124,7 +128,7 @@ database:
   existingSecret:
     # A Secret in this release's namespace. Mounted as a file and read through
     # DB_PASSWORD_FILE, never exposed as an environment variable.
-    name: wishlist-database
+    name: wishlist-postgres-app
     passwordKey: password
 
 resources:

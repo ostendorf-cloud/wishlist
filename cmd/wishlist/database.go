@@ -27,7 +27,7 @@ const databaseCheckTimeout = 2 * time.Second
 // The returned wait function blocks until the background migration has
 // returned, which main calls after cancelling ctx so the pool is not closed
 // under a running migration.
-func startDatabase(ctx context.Context, cfg config.Database, logger *slog.Logger, checks *health.Registry) (db *store.Store, wait func(), err error) {
+func startDatabase(ctx context.Context, cfg config.Database, logger *slog.Logger, checks *health.Registry) (db *store.Core, wait func(), err error) {
 	db, err = store.Open(ctx, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("wishlist: %w", err)

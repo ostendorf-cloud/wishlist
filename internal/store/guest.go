@@ -22,8 +22,29 @@ import (
 // owner has closed reservations.
 var ErrClosed = errors.New("list closed for reservations")
 
-// ErrTaken is returned when somebody else took the wish first.
+// ErrTaken is returned when other guests already hold so much of the wish that
+// the wanted quantity is used up. It is a conflict, not a bad input.
 var ErrTaken = errors.New("wish already taken")
+
+// ErrInvalidQuantity is returned for a quantity below 1, above maxQuantity, or
+// above what the wish asks for in total.
+var ErrInvalidQuantity = errors.New("invalid quantity")
+
+// ErrInvalidAmount is returned for a pledge that is not between 1 and
+// maxAmountCents.
+var ErrInvalidAmount = errors.New("invalid amount")
+
+// ErrGuestKeyRequired is returned when a guest write comes without the
+// guest's key: the key is what lets a guest undo their own entry later.
+var ErrGuestKeyRequired = errors.New("guest key is required")
+
+// Input limits, far above any real wish and far below what PostgreSQL's
+// integer columns hold, so the database never answers with a raw check or
+// overflow error for a plausible mistake.
+const (
+	maxQuantity    = 10_000
+	maxAmountCents = int64(1_000_000_000_00)
+)
 
 // Reservation states.
 const (
@@ -80,7 +101,7 @@ func (g GuestWish) OpenCents() int64 {
 
 // ListByToken resolves a share token. An archived list and an unknown token are
 // the same answer, so a guest cannot tell one from the other.
-func (s *Store) ListByToken(ctx context.Context, token string) (GuestList, error) {
+func (s *GuestStore) ListByToken(ctx context.Context, token string) (GuestList, error) {
 	if token == "" {
 		return GuestList{}, ErrNotFound
 	}
@@ -103,7 +124,7 @@ func (s *Store) ListByToken(ctx context.Context, token string) (GuestList, error
 
 // WishOnList resolves a wish id against a list: the proof that the wish
 // belongs to that token, without any reservation.
-func (s *Store) WishOnList(ctx context.Context, listID, wishID int64) (Wish, error) {
+func (s *GuestStore) WishOnList(ctx context.Context, listID, wishID int64) (Wish, error) {
 	var wish Wish
 	err := scanWish(s.pool.QueryRow(ctx,
 		`select `+wishColumns+` from wishes where id = $1 and list_id = $2 and not archived`,
@@ -116,7 +137,7 @@ func (s *Store) WishOnList(ctx context.Context, listID, wishID int64) (Wish, err
 
 // GuestWishes are the wishes of a list with every reservation on them. guestKey
 // marks the viewer's own entries, which are the only ones they may undo.
-func (s *Store) GuestWishes(ctx context.Context, listID int64, guestKey string) ([]GuestWish, error) {
+func (s *GuestStore) GuestWishes(ctx context.Context, listID int64, guestKey string) ([]GuestWish, error) {
 	rows, err := s.pool.Query(ctx, `
 		select `+wishColumns+`
 		from wishes
@@ -185,7 +206,7 @@ func (s *Store) GuestWishes(ctx context.Context, listID int64, guestKey string) 
 }
 
 // GuestWish is one wish of a list, for the pages that show a single one.
-func (s *Store) GuestWish(ctx context.Context, listID, wishID int64, guestKey string) (GuestWish, error) {
+func (s *GuestStore) GuestWish(ctx context.Context, listID, wishID int64, guestKey string) (GuestWish, error) {
 	wishes, err := s.GuestWishes(ctx, listID, guestKey)
 	if err != nil {
 		return GuestWish{}, err
@@ -204,16 +225,21 @@ func (s *Store) GuestWish(ctx context.Context, listID, wishID int64, guestKey st
 // state is reserved or bought, amountCents a pledge towards a group gift or
 // nil. The list has to be open and the wish has to be on it, both checked in
 // the transaction rather than beforehand: two guests click at the same time.
-func (s *Store) Reserve(ctx context.Context, listID, wishID int64, guestKey, guestName, state string, quantity int, amountCents *int64) error {
+func (s *GuestStore) Reserve(ctx context.Context, listID, wishID int64, guestKey, guestName, state string, quantity int, amountCents *int64) error {
 	if guestKey == "" {
-		return errors.New("guest key is required")
+		return ErrGuestKeyRequired
 	}
 	if state != StateReserved && state != StateBought {
 		return fmt.Errorf("state %q is not reserved or bought", state)
 	}
-	quantity = max(quantity, 1)
+	if quantity < 1 || quantity > maxQuantity {
+		return fmt.Errorf("%w: %d is not between 1 and %d", ErrInvalidQuantity, quantity, maxQuantity)
+	}
+	if amountCents != nil && (*amountCents < 1 || *amountCents > maxAmountCents) {
+		return fmt.Errorf("%w: %d cents is not between 1 and %d", ErrInvalidAmount, *amountCents, maxAmountCents)
+	}
 
-	return s.tx(ctx, func(tx pgx.Tx) error {
+	return runTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var open, groupGift bool
 		var wanted int
 		err := tx.QueryRow(ctx, `
@@ -241,8 +267,14 @@ func (s *Store) Reserve(ctx context.Context, listID, wishID int64, guestKey, gue
 			return fmt.Errorf("taken: %w", err)
 		}
 		// A group gift is never full: several people pay towards one present.
-		if !groupGift && taken+quantity > wanted {
-			return ErrTaken
+		if !groupGift {
+			if quantity > wanted {
+				// Nobody else is involved: the request alone asks for too much.
+				return fmt.Errorf("%w: %d asked, %d wanted", ErrInvalidQuantity, quantity, wanted)
+			}
+			if taken+quantity > wanted {
+				return ErrTaken
+			}
 		}
 
 		_, err = tx.Exec(ctx, `
@@ -264,7 +296,7 @@ func (s *Store) Reserve(ctx context.Context, listID, wishID int64, guestKey, gue
 
 // Release undoes a guest's own reservation. Somebody else's is ErrNotFound: the
 // cookie is what identifies a guest.
-func (s *Store) Release(ctx context.Context, listID, wishID int64, guestKey string) error {
+func (s *GuestStore) Release(ctx context.Context, listID, wishID int64, guestKey string) error {
 	if guestKey == "" {
 		return ErrNotFound
 	}
@@ -288,7 +320,7 @@ func (s *Store) Release(ctx context.Context, listID, wishID int64, guestKey stri
 // visibility filter here is deliberate. Adding one would hide the owner's
 // answers, which carry visibility owner because that is what lets the owner
 // read their own thread.
-func (s *Store) GuestComments(ctx context.Context, listID int64, guestKey string) (map[int64][]Comment, error) {
+func (s *GuestStore) GuestComments(ctx context.Context, listID int64, guestKey string) (map[int64][]Comment, error) {
 	rows, err := s.pool.Query(ctx, `
 		select c.id, c.wish_id, c.author_kind, c.author, c.body, c.visibility,
 		       c.guest_key <> '' and c.guest_key = $2, c.created_at
@@ -308,7 +340,10 @@ func (s *Store) GuestComments(ctx context.Context, listID int64, guestKey string
 
 // AddGuestComment writes a guest's message. visibility guests keeps it among
 // the guests, visibility owner asks the owner, who then sees it.
-func (s *Store) AddGuestComment(ctx context.Context, listID, wishID int64, guestKey, author, body, visibility string) error {
+func (s *GuestStore) AddGuestComment(ctx context.Context, listID, wishID int64, guestKey, author, body, visibility string) error {
+	if guestKey == "" {
+		return ErrGuestKeyRequired
+	}
 	if visibility != VisibleToGuests && visibility != VisibleToOwner {
 		return fmt.Errorf("visibility %q is not guests or owner", visibility)
 	}
@@ -329,7 +364,7 @@ func (s *Store) AddGuestComment(ctx context.Context, listID, wishID int64, guest
 }
 
 // DeleteComment removes a guest's own comment, identified by their cookie.
-func (s *Store) DeleteComment(ctx context.Context, listID, commentID int64, guestKey string) error {
+func (s *GuestStore) DeleteComment(ctx context.Context, listID, commentID int64, guestKey string) error {
 	if guestKey == "" {
 		return ErrNotFound
 	}

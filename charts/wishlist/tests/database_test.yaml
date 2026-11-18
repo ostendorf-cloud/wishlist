@@ -18,12 +18,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DB_NAME
-            value: wishlist
+            value: app
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: DB_USER
-            value: wishlist
+            value: app
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -54,7 +54,7 @@ tests:
           value: true
       - equal:
           path: spec.template.spec.volumes[0].secret.secretName
-          value: wishlist-database
+          value: wishlist-postgres-app
 
   - it: follows the secret and key names from the values
     set:

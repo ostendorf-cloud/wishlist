@@ -4,10 +4,13 @@
 // Package store is the whole database access of the service: the schema, the
 // owner's queries and the guest's queries.
 //
-// The two sides are separated on purpose. Only guest.go may name the
-// reservations table, because the owner of a list must not learn what was
-// taken (docs/adr/0001-blind-reservations.md). boundary_test.go holds every
-// other file to it. Everything the owner reads or writes is in owner.go.
+// The two sides are separate types. OwnerStore, in owner.go, has every query
+// the owner of a list may run. GuestStore, in guest.go, has the guests' queries
+// and is the only code that names the reservations table. Both are views on one
+// Core, which owns the pool and the lifecycle (Open, Close, Ping, Migrate). A
+// handler for the owner is given an OwnerStore and nothing else, so it cannot
+// call a guest method: the compiler enforces it. boundary_test.go enforces the
+// file side of the same rule (docs/adr/0001-blind-reservations.md).
 package store
 
 import (
@@ -42,12 +45,32 @@ var ErrNotFound = errors.New("not found")
 // ErrNotMigrated is what Ping returns while the schema is not applied yet.
 var ErrNotMigrated = errors.New("schema not applied yet")
 
-// Store holds the pool. Every method takes a context and is safe for
-// concurrent use, as several pods and several requests share one database.
-type Store struct {
+// Core holds the pool and the lifecycle. It has no query. Owners and Guests
+// hand out the two sides, which share the pool and nothing else.
+type Core struct {
 	pool     *pgxpool.Pool
 	migrated atomic.Bool
+	// pause is the first wait between two migration attempts. Zero means the
+	// default. Tests set it.
+	pause time.Duration
 }
+
+// OwnerStore is what the owner of a list may run. It never touches the
+// reservations table.
+type OwnerStore struct {
+	pool *pgxpool.Pool
+}
+
+// GuestStore is what a guest may run, reservations included.
+type GuestStore struct {
+	pool *pgxpool.Pool
+}
+
+// Owners returns the owner's side.
+func (c *Core) Owners() *OwnerStore { return &OwnerStore{pool: c.pool} }
+
+// Guests returns the guest's side.
+func (c *Core) Guests() *GuestStore { return &GuestStore{pool: c.pool} }
 
 // dsn is the connection string without the password, which is set on the
 // parsed config instead: a password with a %, @ or : in it would otherwise
@@ -84,7 +107,7 @@ func poolConfig(cfg config.Database) (*pgxpool.Config, error) {
 // Open builds the pool. It does not connect: the first query does, so a
 // database that is still starting does not stop the pod. Readiness reports
 // the gap through Ping.
-func Open(ctx context.Context, cfg config.Database) (*Store, error) {
+func Open(ctx context.Context, cfg config.Database) (*Core, error) {
 	pc, err := poolConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -93,29 +116,29 @@ func Open(ctx context.Context, cfg config.Database) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("database pool: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return &Core{pool: pool}, nil
 }
 
 // Close waits for the pool's connections to be returned and closes them.
-func (s *Store) Close() {
-	s.pool.Close()
+func (c *Core) Close() {
+	c.pool.Close()
 }
 
 // Ping is what the readiness probe answers from: a pod that cannot reach its
 // database, or whose schema is not applied yet, serves nothing useful.
-func (s *Store) Ping(ctx context.Context) error {
-	if err := s.pool.Ping(ctx); err != nil {
+func (c *Core) Ping(ctx context.Context) error {
+	if err := c.pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping: %w", err)
 	}
-	if !s.migrated.Load() {
+	if !c.migrated.Load() {
 		return ErrNotMigrated
 	}
 	return nil
 }
 
-// tx runs fn in a transaction and rolls back on any error or panic.
-func (s *Store) tx(ctx context.Context, fn func(pgx.Tx) error) error {
-	tx, err := s.pool.Begin(ctx)
+// runTx runs fn in a transaction and rolls back on any error or panic.
+func runTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) error {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
@@ -131,6 +154,10 @@ func (s *Store) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
+}
+
+func (c *Core) tx(ctx context.Context, fn func(pgx.Tx) error) error {
+	return runTx(ctx, c.pool, fn)
 }
 
 // notFound maps pgx' no rows to the package's own error, so callers never

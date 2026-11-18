@@ -22,7 +22,7 @@ import (
 // UpsertOwner records the account behind an OIDC subject and returns it. The
 // subject is the key: a rename at the identity provider changes the username,
 // not the rows.
-func (s *Store) UpsertOwner(ctx context.Context, subject, username, displayName, email string) (Owner, error) {
+func (s *OwnerStore) UpsertOwner(ctx context.Context, subject, username, displayName, email string) (Owner, error) {
 	var owner Owner
 	err := s.pool.QueryRow(ctx, `
 		insert into owners (subject, username, display_name, email)
@@ -60,7 +60,7 @@ func scanListsWithCount(rows pgx.Rows) ([]List, error) {
 }
 
 // Lists are the owner's lists, newest first, with the number of wishes on each.
-func (s *Store) Lists(ctx context.Context, ownerID int64, includeArchived bool) ([]List, error) {
+func (s *OwnerStore) Lists(ctx context.Context, ownerID int64, includeArchived bool) ([]List, error) {
 	rows, err := s.pool.Query(ctx, `
 		select `+listColumns+`,
 		       (select count(*) from wishes w where w.list_id = l.id and not w.archived)
@@ -79,7 +79,7 @@ func (s *Store) Lists(ctx context.Context, ownerID int64, includeArchived bool) 
 }
 
 // List is one of the owner's lists. A list of somebody else is ErrNotFound.
-func (s *Store) List(ctx context.Context, ownerID, listID int64) (List, error) {
+func (s *OwnerStore) List(ctx context.Context, ownerID, listID int64) (List, error) {
 	var list List
 	err := scanList(s.pool.QueryRow(ctx,
 		`select `+listColumns+` from lists where id = $1 and owner_id = $2`, listID, ownerID), &list)
@@ -91,7 +91,7 @@ func (s *Store) List(ctx context.Context, ownerID, listID int64) (List, error) {
 
 // CreateList adds a list. The guest link is created separately, so a list can
 // be filled before anybody can see it.
-func (s *Store) CreateList(ctx context.Context, ownerID int64, in ListInput) (List, error) {
+func (s *OwnerStore) CreateList(ctx context.Context, ownerID int64, in ListInput) (List, error) {
 	var list List
 	err := scanList(s.pool.QueryRow(ctx, `
 		insert into lists (owner_id, title, occasion, event_date, greeting, reserve_open)
@@ -105,7 +105,7 @@ func (s *Store) CreateList(ctx context.Context, ownerID int64, in ListInput) (Li
 }
 
 // UpdateList writes the editable fields of a list.
-func (s *Store) UpdateList(ctx context.Context, ownerID, listID int64, in ListInput) error {
+func (s *OwnerStore) UpdateList(ctx context.Context, ownerID, listID int64, in ListInput) error {
 	tag, err := s.pool.Exec(ctx, `
 		update lists
 		set title = $3, occasion = $4, event_date = $5, greeting = $6, reserve_open = $7,
@@ -123,7 +123,7 @@ func (s *Store) UpdateList(ctx context.Context, ownerID, listID int64, in ListIn
 
 // SetListArchived hides a list from the overview and from its guest link
 // without deleting anything.
-func (s *Store) SetListArchived(ctx context.Context, ownerID, listID int64, archived bool) error {
+func (s *OwnerStore) SetListArchived(ctx context.Context, ownerID, listID int64, archived bool) error {
 	tag, err := s.pool.Exec(ctx,
 		`update lists set archived = $3, updated_at = now() where id = $1 and owner_id = $2`,
 		listID, ownerID, archived)
@@ -138,7 +138,7 @@ func (s *Store) SetListArchived(ctx context.Context, ownerID, listID int64, arch
 
 // SetShareToken sets or rotates the guest link, or turns it off with an empty
 // token. Rotating invalidates every link already handed out, which is the point.
-func (s *Store) SetShareToken(ctx context.Context, ownerID, listID int64, token string) error {
+func (s *OwnerStore) SetShareToken(ctx context.Context, ownerID, listID int64, token string) error {
 	var value *string
 	if token != "" {
 		value = &token
@@ -158,9 +158,9 @@ func (s *Store) SetShareToken(ctx context.Context, ownerID, listID int64, token 
 // DeleteList removes the list and, through the foreign keys, everything that
 // hangs off it. It returns the object keys of the pictures, which the caller
 // deletes from the object store afterwards.
-func (s *Store) DeleteList(ctx context.Context, ownerID, listID int64) ([]string, error) {
+func (s *OwnerStore) DeleteList(ctx context.Context, ownerID, listID int64) ([]string, error) {
 	var keys []string
-	err := s.tx(ctx, func(tx pgx.Tx) error {
+	err := runTx(ctx, s.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			select image_key from wishes
 			where list_id = (select id from lists where id = $1 and owner_id = $2)
@@ -198,7 +198,7 @@ func (s *Store) DeleteList(ctx context.Context, ownerID, listID int64) ([]string
 
 // Wishes are the wishes of one of the owner's lists, in the list's order. What
 // guests did with them is not part of the answer.
-func (s *Store) Wishes(ctx context.Context, ownerID, listID int64, includeArchived bool) ([]Wish, error) {
+func (s *OwnerStore) Wishes(ctx context.Context, ownerID, listID int64, includeArchived bool) ([]Wish, error) {
 	rows, err := s.pool.Query(ctx, `
 		select `+wishColumns+`
 		from wishes
@@ -226,7 +226,7 @@ func (s *Store) Wishes(ctx context.Context, ownerID, listID int64, includeArchiv
 }
 
 // Wish is one wish of the owner, whichever list it is on.
-func (s *Store) Wish(ctx context.Context, ownerID, wishID int64) (Wish, error) {
+func (s *OwnerStore) Wish(ctx context.Context, ownerID, wishID int64) (Wish, error) {
 	var wish Wish
 	err := scanWish(s.pool.QueryRow(ctx, `
 		select `+wishColumns+`
@@ -240,7 +240,7 @@ func (s *Store) Wish(ctx context.Context, ownerID, wishID int64) (Wish, error) {
 }
 
 // CreateWish appends a wish to the list, at the end of its order.
-func (s *Store) CreateWish(ctx context.Context, ownerID, listID int64, in WishInput) (Wish, error) {
+func (s *OwnerStore) CreateWish(ctx context.Context, ownerID, listID int64, in WishInput) (Wish, error) {
 	var wish Wish
 	err := scanWish(s.pool.QueryRow(ctx, `
 		insert into wishes (list_id, title, description, url, shop, price_cents, currency,
@@ -259,7 +259,7 @@ func (s *Store) CreateWish(ctx context.Context, ownerID, listID int64, in WishIn
 }
 
 // UpdateWish writes the editable fields.
-func (s *Store) UpdateWish(ctx context.Context, ownerID, wishID int64, in WishInput) error {
+func (s *OwnerStore) UpdateWish(ctx context.Context, ownerID, wishID int64, in WishInput) error {
 	tag, err := s.pool.Exec(ctx, `
 		update wishes
 		set title = $3, description = $4, url = $5, shop = $6, price_cents = $7, currency = $8,
@@ -278,7 +278,7 @@ func (s *Store) UpdateWish(ctx context.Context, ownerID, wishID int64, in WishIn
 
 // SetWishArchived takes a wish off the guest's view without deleting it, for a
 // wish that was fulfilled elsewhere.
-func (s *Store) SetWishArchived(ctx context.Context, ownerID, wishID int64, archived bool) error {
+func (s *OwnerStore) SetWishArchived(ctx context.Context, ownerID, wishID int64, archived bool) error {
 	tag, err := s.pool.Exec(ctx, `
 		update wishes set archived = $3, updated_at = now()
 		where id = $1 and list_id in (select id from lists where owner_id = $2)`,
@@ -293,7 +293,7 @@ func (s *Store) SetWishArchived(ctx context.Context, ownerID, wishID int64, arch
 }
 
 // DeleteWish removes a wish and returns its picture's object key.
-func (s *Store) DeleteWish(ctx context.Context, ownerID, wishID int64) (string, error) {
+func (s *OwnerStore) DeleteWish(ctx context.Context, ownerID, wishID int64) (string, error) {
 	var key string
 	err := s.pool.QueryRow(ctx, `
 		delete from wishes
@@ -307,18 +307,36 @@ func (s *Store) DeleteWish(ctx context.Context, ownerID, wishID int64) (string, 
 
 // MoveWish swaps a wish with its neighbour, up for -1 and down for 1: the whole
 // ordering the owner needs, without a drag and drop protocol.
-func (s *Store) MoveWish(ctx context.Context, ownerID, wishID int64, direction int) error {
+func (s *OwnerStore) MoveWish(ctx context.Context, ownerID, wishID int64, direction int) error {
 	if direction != -1 && direction != 1 {
 		return errors.New("direction is -1 or 1")
 	}
-	return s.tx(ctx, func(tx pgx.Tx) error {
+	return runTx(ctx, s.pool, func(tx pgx.Tx) error {
+		// The list row is locked first, so every move inside one list runs one
+		// after the other and always takes its locks in the same order: list,
+		// then wishes. Locking only the moved wish let two moves of adjacent
+		// wishes wait on each other (deadlock, 40P01) or write a stale
+		// position. "no key update" does not block a wish being added to the
+		// list, which only needs a key share lock.
 		var listID int64
+		err := tx.QueryRow(ctx, `
+			select id from lists
+			where id = (select w.list_id from wishes w
+			            join lists o on o.id = w.list_id
+			            where w.id = $1 and o.owner_id = $2)
+			for no key update`, wishID, ownerID).Scan(&listID)
+		if err != nil {
+			return fmt.Errorf("move wish: %w", notFound(err))
+		}
+
+		// Read again under the lock: the position may have changed while this
+		// move waited for it.
 		var position int
 		var archived bool
-		err := tx.QueryRow(ctx, `
-			select list_id, position, archived from wishes
-			where id = $1 and list_id in (select id from lists where owner_id = $2)
-			for update`, wishID, ownerID).Scan(&listID, &position, &archived)
+		err = tx.QueryRow(ctx, `
+			select position, archived from wishes
+			where id = $1 and list_id = $2
+			for update`, wishID, listID).Scan(&position, &archived)
 		if err != nil {
 			return fmt.Errorf("move wish: %w", notFound(err))
 		}
@@ -368,7 +386,7 @@ func (s *Store) MoveWish(ctx context.Context, ownerID, wishID int64, direction i
 
 // EventsSoon are the owner's lists whose date is within the given duration,
 // for a reminder.
-func (s *Store) EventsSoon(ctx context.Context, ownerID int64, within time.Duration) ([]List, error) {
+func (s *OwnerStore) EventsSoon(ctx context.Context, ownerID int64, within time.Duration) ([]List, error) {
 	rows, err := s.pool.Query(ctx, `
 		select `+listColumns+`, 0
 		from lists l
@@ -389,7 +407,7 @@ func (s *Store) EventsSoon(ctx context.Context, ownerID int64, within time.Durat
 // OwnerQuestions are the comments guests addressed to the owner, per wish, with
 // the owner's own answers next to them. Guest-only comments are not part of
 // the answer.
-func (s *Store) OwnerQuestions(ctx context.Context, ownerID, listID int64) (map[int64][]Comment, error) {
+func (s *OwnerStore) OwnerQuestions(ctx context.Context, ownerID, listID int64) (map[int64][]Comment, error) {
 	rows, err := s.pool.Query(ctx, `
 		select c.id, c.wish_id, c.author_kind, c.author, c.body, c.visibility, false, c.created_at
 		from comments c
@@ -411,7 +429,7 @@ func (s *Store) OwnerQuestions(ctx context.Context, ownerID, listID int64) (map[
 // schema forces on an owner's comment, and it means both sides read it: the
 // owner through OwnerQuestions, the guests through GuestComments, which
 // filters nothing. An answer only the owner could see would be pointless.
-func (s *Store) AddOwnerReply(ctx context.Context, ownerID, wishID int64, body string) error {
+func (s *OwnerStore) AddOwnerReply(ctx context.Context, ownerID, wishID int64, body string) error {
 	tag, err := s.pool.Exec(ctx, `
 		insert into comments (wish_id, author_kind, author, body, visibility)
 		select w.id, $3, '', $4, $5

@@ -13,7 +13,8 @@ The global baseline already applies here and is not repeated below.
   one error. Every secret-shaped variable has a `_FILE` twin (`DB_PASSWORD` or
   `DB_PASSWORD_FILE`).
 - `internal/store` is the whole database access: a pgx pool, the embedded migrations in
-  `migrations/` applied at startup, `owner.go` and `guest.go`. See "The store boundary".
+  `migrations/` applied at startup, `owner.go` (`OwnerStore`) and `guest.go` (`GuestStore`).
+  See "The store boundary".
 - `internal/dbtest` gives a test its own database on a real PostgreSQL, see "Store tests".
 - `internal/depsync` checks that `go.mod` and `web/package.json` pin the same govue version,
   and that `web/pnpm-lock.yaml` still resolves govue's Vue package to its `/web`
@@ -46,12 +47,34 @@ half of a govue release and not the other half, silently. `task check:govue-vers
 
 ## The store boundary
 
-Only `internal/store/guest.go` may name the `reservations` table, in any spelling. Every
-owner query lives in `owner.go`, and the comments the guests write are in `guest.go`.
-`boundary_test.go` reads the other files' syntax trees and fails on a string naming the
-table. It needs no database and runs everywhere. The migrations under `migrations/` may
-name it, since a schema has to create it. A new store file that needs reservations is a
-design change, not a test change: see `docs/adr/0001-blind-reservations.md`.
+The store has two sides that share only the pool. `Core` owns `Open`, `Close`, `Ping` and
+`Migrate`, and hands out `OwnerStore` (`Owners()`, all methods in `owner.go`) and
+`GuestStore` (`Guests()`, all methods in `guest.go`). A handler for the owner is given an
+`OwnerStore` and nothing else, so the compiler stops it from calling a guest method. Only
+`guest.go` may name the `reservations` table, and the comments the guests write are there
+too. `boundary_test.go` needs no database and runs everywhere. It checks:
+
+- every constant string of the other `.go` files, evaluated with `go/types`: literals, named
+  constants, constants from another file or from `guest.go`, and constant `+` expressions
+  of them, however far apart the parts are. Case insensitive, escapes decoded.
+- the `U&"` identifier spelling and catalog queries (`pg_stat`, `pg_class`, `pg_catalog`,
+  `information_schema` and a few more) in those strings.
+- every other file in the store tree, of any extension and any case, outside `migrations/`.
+- `migrations/`: only `NNNN_name.sql` files. A statement that mentions the table has to be
+  its own `create table`, an index on it or an `alter table` of it. A view, function, rule,
+  trigger or another table's foreign key over it, and dynamic SQL (`do`, `execute`), fail.
+- that each side's methods stay in their own file and the two types share no method.
+
+It does not catch a name built when the program runs, for example with `fmt.Sprintf`,
+`strings.ReplaceAll` or a rune slice: no static test can. The handler layer review and the
+code review cover that, and the type split keeps owner handlers away from guest methods in
+the first place. A new store file that needs reservations is a design change, not a test
+change: see `docs/adr/0001-blind-reservations.md`.
+
+Each migration runs in one transaction with its bookkeeping row, so `create index
+concurrently` cannot be a migration. Extend the runner first. The password from `DB_PASSWORD`
+or `DB_PASSWORD_FILE` is whitespace trimmed by govue's `envconf`, from the variable and from
+the file alike.
 
 ## Store tests
 

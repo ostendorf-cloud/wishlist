@@ -22,6 +22,11 @@ import (
 // below, the way the predecessor service did. A migration library would add a
 // dependency and a second dialect for a schema that is a handful of files.
 //
+// Each file runs in one transaction together with its bookkeeping row, so a
+// statement that cannot run inside a transaction, such as
+// "create index concurrently", cannot be a migration here. A change like that
+// needs the runner extended first.
+//
 //go:embed migrations/*.sql
 var migrations embed.FS
 
@@ -39,7 +44,13 @@ type migration struct {
 // loadMigrations reads the embedded files and checks their numbering: the
 // versions start at 1 and have no gap and no repeat.
 func loadMigrations() ([]migration, error) {
-	entries, err := fs.ReadDir(migrations, "migrations")
+	return readMigrations(migrations, "migrations")
+}
+
+// readMigrations reads the numbered files of dir in fsys. A test hands it a
+// fixture file system.
+func readMigrations(fsys fs.FS, dir string) ([]migration, error) {
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return nil, fmt.Errorf("read migrations: %w", err)
 	}
@@ -57,7 +68,7 @@ func loadMigrations() ([]migration, error) {
 		if err != nil || version < 1 {
 			return nil, fmt.Errorf("migration %s has no version number", entry.Name())
 		}
-		body, err := migrations.ReadFile(path.Join("migrations", entry.Name()))
+		body, err := fs.ReadFile(fsys, path.Join(dir, entry.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
@@ -76,7 +87,7 @@ func loadMigrations() ([]migration, error) {
 // transaction together with its bookkeeping row: a file that fails leaves
 // nothing half applied. After it returns nil, Ping stops reporting
 // ErrNotMigrated.
-func (s *Store) Migrate(ctx context.Context) error {
+func (s *Core) Migrate(ctx context.Context) error {
 	files, err := loadMigrations()
 	if err != nil {
 		return err
@@ -110,7 +121,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) applyMigration(ctx context.Context, m migration) error {
+func (s *Core) applyMigration(ctx context.Context, m migration) error {
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		// Held until the transaction ends, so two pods starting together apply
 		// the file once.
@@ -142,9 +153,12 @@ func (s *Store) applyMigration(ctx context.Context, m migration) error {
 // pause while the database is not there yet, and returns once it is applied
 // or ctx ends. It never gives up on its own: a database that starts after the
 // pod does is the normal case in a cluster, and readiness reports the gap.
-func (s *Store) MigrateUntilReady(ctx context.Context, logger *slog.Logger) error {
+func (s *Core) MigrateUntilReady(ctx context.Context, logger *slog.Logger) error {
 	const maxWait = 30 * time.Second
-	wait := time.Second
+	wait := s.pause
+	if wait <= 0 {
+		wait = time.Second
+	}
 	for {
 		attempt, cancel := context.WithTimeout(ctx, time.Minute)
 		err := s.Migrate(attempt)
