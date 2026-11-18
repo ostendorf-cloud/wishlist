@@ -29,8 +29,11 @@ package store
 //     a query given as a string (query_to_xml, cursor_to_xml, execute, do $),
 //     which can find or build the table name inside the SQL.
 //   - imports: a non guest file may import only the standard library, pgx and
-//     internal/config. A constant of any other package cannot be evaluated here,
-//     so the import itself is the violation.
+//     internal/config, and never "C". A constant of any other package cannot be
+//     evaluated here, and a cgo preamble is C source, so the import itself is
+//     the violation.
+//   - files are attributed by their real name: a //line directive naming guest.go
+//     does not exempt a file.
 //   - every other file in the store tree, of any extension and any case, outside
 //     migrations/: scanned as text for the name and for the same things. A _test.go
 //     file is skipped unless a go:embed directive names it.
@@ -40,18 +43,34 @@ package store
 //     make it inherit or attach a partition. A view, function, rule, trigger,
 //     policy, or another table's foreign key over the table is a violation, and
 //     so is dynamic SQL (do, execute) and a catalog query, which cannot be read.
+//     Statements are cut and comments removed with a reader that knows single
+//     quoted, E, double quoted and dollar quoted text, so "--" or "/*" inside a
+//     string hides nothing.
 //   - sides: no non guest file except store.go mentions GuestStore, Guests or a
 //     guest method, and guest.go never mentions OwnerStore or Owners.
+//
+// This is a guard against accidents by a contributor, not against a determined
+// one. The real defence is the review of the handler layer and code review.
 //
 // What it does NOT catch:
 //
 //   - a name built when the program runs: fmt.Sprintf, strings.ReplaceAll, a
 //     rune slice, a function result, a package level variable initialised by a
-//     call. No static test can see those.
+//     call, a struct tag read through reflect.
+//   - a name built from local variables: x := "reserv"; x + "ations", x +=
+//     "ations" in a function, or a package variable += in init(). Only package
+//     level declarations are evaluated.
+//   - a name split inside an embedded template, or in a .s file.
+//   - a go:embed pattern that is quoted and contains a space.
 //   - a constant of an allowlisted package that has been changed to spell the
 //     name: the allowlist is the review point.
 //   - a name an owner query finds through the database in a way the markers
-//     above do not list.
+//     above do not list, for example alter table reservations set (...), owner
+//     to, create publication ... for all tables, or pg_sequences (which leaks
+//     only the global reservation count).
+//   - checkSides gaps: an unexported guest method, a type alias for GuestStore
+//     declared in store.go, a call by reflection on the method name. (A
+//     package level function in guest.go is a violation, so that gap is closed.)
 //   - a migration object that does not mention the table and is harmless or not.
 //
 // Review of the handler layer and code review cover what is left. The type split
@@ -95,8 +114,8 @@ var catalogMarkers = []string{
 // dynamicMarkers are the ways to run, or build, a query inside a query: the
 // table name can then be assembled in SQL where no Go constant shows it.
 var dynamicMarkers = []string{
-	"query_to_xml", "cursor_to_xml", "table_to_xml", "schema_to_xml", "database_to_xml",
-	"dblink", "execute", "do $", "do$",
+	"query_to_xml", "query_to_xml_and_xmlschema", "cursor_to_xml", "table_to_xml", "schema_to_xml",
+	"database_to_xml", "dblink", "ts_stat", "xpath_table", "execute", "do $", "do$",
 }
 
 // forbiddenAlter are the parts of an alter table that change what the table is
@@ -107,6 +126,10 @@ var forbiddenAlter = []string{"rename", "set schema", "inherit", "attach partiti
 // allowedImports says whether a non guest file may import a package: the
 // standard library (no dot in the first path element), pgx and the config.
 func allowedImport(path string) bool {
+	if path == "C" {
+		// A cgo preamble is C source: a #define there is a string no check reads.
+		return false
+	}
 	first, _, _ := strings.Cut(path, "/")
 	if !strings.Contains(first, ".") {
 		return true
@@ -395,7 +418,9 @@ func checkGoDir(root string, paths []string) ([]string, error) {
 
 	seen := map[string]bool{}
 	report := func(pos token.Pos, value string) {
-		position := fset.Position(pos)
+		// Not Position: that one applies //line directives, and a directive
+		// naming guest.go would make this file look like the exempt one.
+		position := fset.PositionFor(pos, false)
 		rel, err := filepath.Rel(root, position.Filename)
 		if err != nil || rel == guestFile {
 			return
@@ -450,21 +475,130 @@ func checkMigrations(dir string) ([]string, error) {
 	return out, nil
 }
 
-var (
-	blockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	lineComment  = regexp.MustCompile(`--[^\n]*`)
-)
+func isIdentChar(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// splitSQL cuts a script into statements at the semicolons that are not inside
+// a string, an identifier or a dollar quote, and replaces comments with a
+// space. "--" and "/*" inside a string are text, not a comment: stripping them
+// blindly would let a statement hide its tail ("select '--', wish_id from
+// reservations") from the rules. It knows single quotes with ” (and E” with
+// backslash escapes), double quoted identifiers, dollar quotes with a tag, line
+// comments and nested block comments.
+func splitSQL(sql string) []string {
+	var statements []string
+	var cur strings.Builder
+	flush := func() {
+		statements = append(statements, cur.String())
+		cur.Reset()
+	}
+
+	for i := 0; i < len(sql); {
+		c := sql[i]
+		switch {
+		case c == '-' && strings.HasPrefix(sql[i:], "--"):
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+			cur.WriteByte(' ')
+		case c == '/' && strings.HasPrefix(sql[i:], "/*"):
+			depth := 0
+			for i < len(sql) {
+				switch {
+				case strings.HasPrefix(sql[i:], "/*"):
+					depth++
+					i += 2
+				case strings.HasPrefix(sql[i:], "*/"):
+					depth--
+					i += 2
+				default:
+					i++
+				}
+				if depth == 0 {
+					break
+				}
+			}
+			cur.WriteByte(' ')
+		case c == '\'':
+			escapes := i > 0 && (sql[i-1] == 'e' || sql[i-1] == 'E') && (i < 2 || !isIdentChar(sql[i-2]))
+			cur.WriteByte(c)
+			i++
+			for i < len(sql) {
+				ch := sql[i]
+				cur.WriteByte(ch)
+				i++
+				if escapes && ch == '\\' && i < len(sql) {
+					cur.WriteByte(sql[i])
+					i++
+					continue
+				}
+				if ch == '\'' {
+					if i < len(sql) && sql[i] == '\'' { // '' is a quote inside the string
+						cur.WriteByte('\'')
+						i++
+						continue
+					}
+					break
+				}
+			}
+		case c == '"':
+			cur.WriteByte(c)
+			i++
+			for i < len(sql) {
+				ch := sql[i]
+				cur.WriteByte(ch)
+				i++
+				if ch == '"' {
+					if i < len(sql) && sql[i] == '"' {
+						cur.WriteByte('"')
+						i++
+						continue
+					}
+					break
+				}
+			}
+		case c == '$' && (i == 0 || !isIdentChar(sql[i-1])):
+			// A dollar quote opens with $tag$, the tag being empty or an identifier
+			// that does not start with a digit.
+			end := i + 1
+			for end < len(sql) && isIdentChar(sql[end]) {
+				end++
+			}
+			tag := sql[i:min(end+1, len(sql))]
+			if end < len(sql) && sql[end] == '$' && (end == i+1 || sql[i+1] < '0' || sql[i+1] > '9') {
+				offset := strings.Index(sql[end+1:], tag)
+				if offset < 0 { // never closed: the rest is the string
+					cur.WriteString(sql[i:])
+					i = len(sql)
+				} else {
+					stop := end + 1 + offset + len(tag)
+					cur.WriteString(sql[i:stop])
+					i = stop
+				}
+				break
+			}
+			cur.WriteByte(c)
+			i++
+		case c == ';':
+			flush()
+			i++
+		default:
+			cur.WriteByte(c)
+			i++
+		}
+	}
+	flush()
+	return statements
+}
 
 // migrationViolations reads one migration's statements. It is a text rule, not
 // a SQL parser: it errs on the strict side, and a statement it cannot place is
 // reported rather than guessed at.
 func migrationViolations(sql string) []string {
-	sql = blockComment.ReplaceAllString(sql, " ")
-	sql = lineComment.ReplaceAllString(sql, " ")
-
 	var out []string
-	for statement := range strings.SplitSeq(strings.ToLower(sql), ";") {
-		statement = strings.Join(strings.Fields(statement), " ")
+	for _, statement := range splitSQL(sql) {
+		statement = strings.Join(strings.Fields(strings.ToLower(statement)), " ")
 		if statement == "" {
 			continue
 		}
@@ -705,6 +839,17 @@ func checkSides(dir string) ([]string, error) {
 	}
 
 	var out []string
+	// A package level function in guest.go could be called from owner.go and
+	// would not be a method of GuestStore, so no selector check would see it.
+	// guest.go has none: everything it offers is a method.
+	if f, ok := parsed[guestFile]; ok {
+		for _, decl := range f.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil {
+				out = append(out, fmt.Sprintf("%s:%d: declares the package level function %s: guest.go has methods of GuestStore only",
+					guestFile, fset.PositionFor(fn.Pos(), false).Line, fn.Name.Name))
+			}
+		}
+	}
 	for name, f := range parsed {
 		var forbidden []string
 		switch name {
@@ -720,12 +865,12 @@ func checkSides(dir string) ([]string, error) {
 			case *ast.Ident:
 				if slices.Contains(forbidden, n.Name) {
 					out = append(out, fmt.Sprintf("%s:%d: mentions %s, which belongs to the other side",
-						name, fset.Position(n.Pos()).Line, n.Name))
+						name, fset.PositionFor(n.Pos(), false).Line, n.Name))
 				}
 			case *ast.SelectorExpr:
 				if name != guestFile && slices.Contains(guestMethods, n.Sel.Name) {
 					out = append(out, fmt.Sprintf("%s:%d: calls the guest method %s",
-						name, fset.Position(n.Sel.Pos()).Line, n.Sel.Name))
+						name, fset.PositionFor(n.Sel.Pos(), false).Line, n.Sel.Name))
 				}
 			}
 			return true
@@ -778,6 +923,10 @@ func TestCheckSidesCatchesEveryCrossReference(t *testing.T) {
 		}, 1},
 		{"guest file asks for the owners", map[string]string{
 			guestFile: guest + "func f(c interface{ Owners() int }) { c.Owners() }\n",
+		}, 1},
+		{"guest file with a free function an owner file could call", map[string]string{
+			guestFile:  guest + "func helper() int { return 1 }\n",
+			"owner.go": "package s\nfunc f() int { return helper() }\n",
 		}, 1},
 		{"store.go hands both out", map[string]string{
 			guestFile:  guest,
@@ -965,6 +1114,63 @@ func TestBoundaryCatchesEverySpelling(t *testing.T) {
 		{"query_to_xml in a migration", map[string]string{
 			"migrations/0001_a.sql": okMigration + "create view v as select query_to_xml('select 1', true, false, '');\n",
 		}, 1},
+
+		// Comment markers inside strings are text, not comments.
+		{"line comment marker in a string hides the table", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view wish_marks as select '--' as x, wish_id from reservations ;\n",
+		}, 1},
+		{"block comment marker in a string hides the table", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view wish_marks as select '/*' as x, wish_id from reservations ;\n",
+		}, 1},
+		{"line comment marker in a quoted identifier", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select \"a--b\", wish_id from reservations;\n",
+		}, 1},
+		{"line comment marker in an E string with an escaped quote", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select e'a\\'b -- c' as x, id from reservations;\n",
+		}, 1},
+		{"line comment marker in a doubled quote string", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select 'it''s -- x' as x, id from reservations;\n",
+		}, 1},
+		{"line comment marker in a dollar quote", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select $$ -- $$ as x, id from reservations;\n",
+		}, 1},
+		{"line comment marker in a tagged dollar quote", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select $t$ /* $t$ as x, id from reservations;\n",
+		}, 1},
+		{"a comment that is a comment still hides nothing", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select 1 -- from reservations\n;\n",
+		}, 0},
+		{"a block comment inside a block comment", map[string]string{
+			"migrations/0001_a.sql": okMigration + "/* a /* reservations */ still a comment */ select 1;\n",
+		}, 0},
+
+		// Line directives must not rename a file.
+		{"line directive naming the guest file", map[string]string{
+			"a.go": "package s\n//line guest.go:1\nvar q = \"select * from reservations\"\n",
+		}, 1},
+		{"block line directive naming the guest file", map[string]string{
+			"a.go": "package s\n/*line guest.go:1:1*/var q = \"select * from reservations\"\n",
+		}, 1},
+
+		// More ways to run a query that is a string.
+		{"ts_stat", map[string]string{"a.go": "package s\nvar q = \"select * from ts_stat('select v from ' || 'reserv' || 'ations')\"\n"}, 1},
+		{"xpath_table", map[string]string{"a.go": "package s\nvar q = \"select * from xpath_table('id', 'doc', 't', '/x', 'true')\"\n"}, 1},
+		{"query_to_xml_and_xmlschema", map[string]string{"a.go": "package s\nvar q = \"select query_to_xml_and_xmlschema('select 1', true, false, '')\"\n"}, 1},
+		{"table_to_xml", map[string]string{"a.go": "package s\nvar q = \"select table_to_xml('t', true, false, '')\"\n"}, 1},
+		{"schema_to_xml", map[string]string{"a.go": "package s\nvar q = \"select schema_to_xml('public', true, false, '')\"\n"}, 1},
+		{"database_to_xml", map[string]string{"a.go": "package s\nvar q = \"select database_to_xml(true, false, '')\"\n"}, 1},
+		{"dblink", map[string]string{"a.go": "package s\nvar q = \"select * from dblink('select 1')\"\n"}, 1},
+		{"do block with a line break and spaces", map[string]string{"a.go": "package s\nvar q = \"do   \\n  $$ begin null; end $$\"\n"}, 1},
+		{"ts_stat in a migration", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select * from ts_stat('select 1');\n",
+		}, 1},
+		{"xpath_table in a migration", map[string]string{
+			"migrations/0001_a.sql": okMigration + "create view v as select * from xpath_table('a','b','c','d','e');\n",
+		}, 1},
+		{"detach partition", map[string]string{
+			"migrations/0001_a.sql": okMigration + "alter table reservations detach partition p;\n",
+		}, 1},
+		{"cgo import", map[string]string{"a.go": "package s\n/*\n#define T \"reserv\"\n*/\nimport \"C\"\n"}, 1},
 
 		// Fine.
 		{"allowed imports", map[string]string{

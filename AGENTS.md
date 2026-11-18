@@ -54,7 +54,9 @@ The store has two sides that share only the pool. `Core` owns `Open`, `Close`, `
 owner must be given an `OwnerStore` and nothing else: only then does the compiler stop it
 from calling a guest method. That is true once the wiring passes an `OwnerStore`. The handler
 layer test of ADR 0001 must forbid any reference to `GuestStore`, `Core.Guests` and `Core` in
-an owner handler. `boundary_test.go` needs no database and runs everywhere. It checks:
+an owner handler. `boundary_test.go` needs no database and runs everywhere. Read it for what
+it is: a guard against accidents by a contributor, not against a determined one. The real
+defence is the handler layer review and the code review. It checks:
 
 - every constant string of the other `.go` files, evaluated with `go/types`: literals, named
   constants, constants from another file or from `guest.go`, constant `+` expressions of
@@ -62,12 +64,18 @@ an owner handler. `boundary_test.go` needs no database and runs everywhere. It c
   such an expression, also from `guest.go`. Case insensitive, escapes decoded.
 - the `U&"` identifier spelling, catalog queries (`pg_stat`, `pg_class`, `pg_catalog`,
   `information_schema` and a few more) and SQL that builds SQL (`query_to_xml`,
-  `cursor_to_xml`, `execute`, `do $`) in those strings.
+  `cursor_to_xml`, `ts_stat`, `xpath_table`, `dblink`, `execute`, `do $` and a few more) in
+  those strings.
 - imports: the other files may import only the standard library, pgx and `internal/config`,
-  because the constants of any other package cannot be evaluated.
+  never `"C"`, because the constants of any other package cannot be evaluated and a cgo
+  preamble is C source.
+- files are attributed by their real name: a `//line guest.go:1` directive does not exempt
+  a file.
 - every other file in the store tree, of any extension and any case, outside `migrations/`,
   and every `_test.go` file a `go:embed` names.
-- `migrations/`: only `NNNN_name.sql` files, with no catalog query and no dynamic SQL. A
+- `migrations/`: only `NNNN_name.sql` files, with no catalog query and no dynamic SQL. The
+  statements are cut and the comments removed by a reader that knows single, `E`, double and
+  dollar quoted text, so `--` or `/*` inside a string hides nothing. A
   statement that mentions the table has to be its own `create table`, an index on it or an
   `alter table` of it that does not rename it, move its schema, inherit or attach a
   partition. A view, function, rule, trigger or another table's foreign key over it fails.
@@ -75,14 +83,24 @@ an owner handler. `boundary_test.go` needs no database and runs everywhere. It c
   has to change the test in review.
 - that each side's methods stay in their own file, the two types share no method, and no
   file other than `store.go` mentions the other side's type, `Guests`/`Owners` or a guest
-  method.
+  method. `guest.go` declares no package level function, only methods of `GuestStore`.
 
 What it does not catch:
 
 - a name built when the program runs: `fmt.Sprintf`, `strings.ReplaceAll`, a rune slice,
-  a function result, a package level variable initialised by a call.
+  a function result, a package level variable initialised by a call, a struct tag read
+  through `reflect`.
+- a name built from local variables (`x := "reserv"; x + "ations"`, `x += "ations"` in a
+  function, a package variable `+=` in `init()`): only package level declarations are
+  evaluated.
+- a name split inside an embedded template or a `.s` file, and a quoted `go:embed` pattern
+  that contains a space.
 - a constant of an allowed package changed to spell the name.
-- a way to find the table through the database that the marker lists do not name.
+- a way to find the table through the database that the marker lists do not name:
+  `alter table reservations set (...)`, `owner to`, `create publication ... for all tables`,
+  `pg_sequences` (which leaks only the global reservation count).
+- the gaps of the side check: an unexported guest method, a type alias for `GuestStore`
+  declared in `store.go`, a call by reflection on the method name.
 - whether a migration object that does not mention the table is harmless.
 
 No static test can close those. The handler layer review and the code review cover them.

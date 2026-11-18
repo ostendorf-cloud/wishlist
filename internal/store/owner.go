@@ -331,8 +331,11 @@ func (s *OwnerStore) MoveWish(ctx context.Context, ownerID, wishID int64, direct
 
 		// Read again under the lock: the position may have changed while this
 		// move waited for it. "no key update" is enough, only non key columns
-		// change, and it lets a guest's comment or reservation, which takes a
-		// key share lock on the wish, go through meanwhile.
+		// change. A guest's comment, which takes a key share lock on the wish,
+		// goes through meanwhile. A guest's Reserve takes "for no key update" on
+		// the same wish row, so one waits for the other. Reserve needs only that
+		// row before its insert, so no lock cycle is expected, but no test runs
+		// the two together.
 		var position int
 		var archived bool
 		err = tx.QueryRow(ctx, `
