@@ -10,8 +10,11 @@ The global baseline already applies here and is not repeated below.
   `dist/` (the built SPA, written by `task web:build`). It sits under `cmd/` rather than
   `internal/` because `go:embed` resolves relative to the file holding the directive.
 - `internal/config` loads and validates the service's own environment once, aggregated into
-  one error. There is no secret-shaped variable yet: no OIDC, no database and no object
-  store exist in this milestone.
+  one error. Every secret-shaped variable has a `_FILE` twin (`DB_PASSWORD` or
+  `DB_PASSWORD_FILE`).
+- `internal/store` is the whole database access: a pgx pool, the embedded migrations in
+  `migrations/` applied at startup, `owner.go` and `guest.go`. See "The store boundary".
+- `internal/dbtest` gives a test its own database on a real PostgreSQL, see "Store tests".
 - `internal/depsync` checks that `go.mod` and `web/package.json` pin the same govue version,
   and that `web/pnpm-lock.yaml` still resolves govue's Vue package to its `/web`
   subdirectory; see "govue's two halves move together" below.
@@ -41,6 +44,34 @@ pnpm git dependency must always name the same tag: a mismatch means this reposit
 half of a govue release and not the other half, silently. `task check:govue-version`
 (`internal/depsync`) enforces this, the same way `ostendorf.tech` does.
 
+## The store boundary
+
+Only `internal/store/guest.go` may name the `reservations` table, in any spelling. Every
+owner query lives in `owner.go`, and the comments the guests write are in `guest.go`.
+`boundary_test.go` reads the other files' syntax trees and fails on a string naming the
+table. It needs no database and runs everywhere. The migrations under `migrations/` may
+name it, since a schema has to create it. A new store file that needs reservations is a
+design change, not a test change: see `docs/adr/0001-blind-reservations.md`.
+
+## Store tests
+
+The tests against a real PostgreSQL (`internal/store/db_test.go`,
+`cmd/wishlist/database_test.go`) read the server's URL from `WISHLIST_TEST_DATABASE_URL`, for
+example `postgres://wishlist:dev-password-not-real@127.0.0.1:5432/postgres?sslmode=disable`.
+The role needs `CREATEDB`: each test creates and drops a database of its own.
+
+```sh
+docker compose up -d postgres
+export WISHLIST_TEST_DATABASE_URL='postgres://wishlist:dev-password-not-real@127.0.0.1:5432/postgres?sslmode=disable'
+task test:go
+```
+
+Without the variable those tests skip with a message naming it, and `task test:go` prints a
+warning before it runs. With `CI` set they fail instead of skipping. The `test` job in
+`.github/workflows/checks.yaml` provides a PostgreSQL service container and the variable.
+There is no fake database: a fake is used only for the client's error paths, by pointing
+the real client at a closed port.
+
 ## Verify before committing
 
 ```sh
@@ -56,14 +87,13 @@ This repository rewrites the existing `old_wishlist` service, a Go application w
 server-rendered templates, into a Go API with a Vue SPA on govue, so it looks and behaves
 like the other `ostendorf-cloud` applications. This milestone is the scaffold alone: the
 embedded SPA shell and the Go entry point serving it, with health, readiness and metrics on
-govue's admin listener. Left out, tracked as later milestones:
+govue's admin listener, plus the PostgreSQL schema and its store (no HTTP surface on top of
+it yet). Left out, tracked as later milestones:
 
 - owner login through OIDC
-- lists and wishes
+- the HTTP API for lists and wishes
 - images, kept in an object store
-- share tokens a guest uses to reach a list without an account
-- guests reserving and releasing a wish
-- comments, between guests and from a guest to the owner
+- the HTTP API for share tokens, reserving and comments
 - two languages
 - link previews when a wish is imported from a product link
 
@@ -73,8 +103,7 @@ its own test proving it, the way `old_wishlist`'s own blind test did. Importing 
 link is also planned to improve on the rewrite: a product link from a large shop should yield
 a usable title, picture and price, which `old_wishlist` did not do.
 
-None of OIDC, a database, an object store client or a migration exists in this repository
-yet.
+Neither OIDC nor an object store client exists in this repository yet.
 
 ## License
 

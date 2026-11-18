@@ -6,10 +6,11 @@
 # in .github/workflows/checks.yaml right after it builds and loads the
 # image, so this never needs a registry.
 #
-# No environment variable is passed to the container: this scaffold has
-# no configuration surface beyond the listen addresses and the log
-# level, every one of which has a usable default; see
-# cmd/wishlist/main.go and internal/config.
+# The container gets dummy database settings that point at a port nothing
+# listens on inside it. No PostgreSQL runs here, so the binary has to stay
+# alive, answer liveness and report itself unready: that is the contract
+# the readiness probe has while the database is unreachable. The real
+# database path is covered by the store tests; see internal/store.
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -39,6 +40,12 @@ trap cleanup EXIT
 docker run \
   --detach \
   --name "$container" \
+  --env DB_HOST=127.0.0.1 \
+  --env DB_PORT=5432 \
+  --env DB_NAME=wishlist \
+  --env DB_USER=wishlist \
+  --env DB_PASSWORD=smoke-dummy-password-not-real \
+  --env DB_SSLMODE=disable \
   --publish "127.0.0.1:8080:8080" \
   --publish "127.0.0.1:8081:8081" \
   "$image" >/dev/null
@@ -83,7 +90,9 @@ assert_status() {
 }
 
 assert_status "/healthz" "200" "$admin_url"
-assert_status "/readyz" "200" "$admin_url"
+# No database is reachable from inside the container, so the service must
+# report itself unready while staying alive.
+assert_status "/readyz" "503" "$admin_url"
 assert_status "/metrics" "200" "$admin_url"
 
 # The public listener must never answer /metrics: that stays on the admin
