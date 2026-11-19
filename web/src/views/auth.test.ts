@@ -135,6 +135,27 @@ describe('sign out', () => {
   })
 })
 
+// vue-router saves its scroll positions under this one key in session storage.
+const ROUTER_SCROLL_KEY = 'vue-router:scroll'
+
+// Fails when any key or value of local or session storage holds a part of the session, or when
+// a key other than the router's own scroll entry exists. The router entry is still searched.
+function expectNoSessionInStorage(secrets: string[]): void {
+  const stores = { localStorage: window.localStorage, sessionStorage: window.sessionStorage }
+  const keys = (s: Storage) => Array.from({ length: s.length }, (_, i) => s.key(i) as string)
+
+  expect(keys(stores.localStorage)).toEqual([])
+  expect(keys(stores.sessionStorage).filter((k) => k !== ROUTER_SCROLL_KEY)).toEqual([])
+  for (const [name, store] of Object.entries(stores)) {
+    for (const key of keys(store)) {
+      for (const secret of secrets) {
+        expect(key, `${name} key`).not.toContain(secret)
+        expect(store.getItem(key), `${name} value of ${key}`).not.toContain(secret)
+      }
+    }
+  }
+}
+
 describe('the auth state', () => {
   function answer(body: unknown, status = 200): typeof fetch {
     return vi.fn().mockResolvedValue(
@@ -173,8 +194,27 @@ describe('the auth state', () => {
     const logout = fetch.mock.calls.find(([url]) => String(url).endsWith('/account/logout'))
     expect(new Headers(logout?.[1]?.headers).get('X-CSRF-Token')).toBe('tok-1')
     expect(auth.state.signedIn).toBe(false)
-    expect(window.localStorage.length).toBe(0)
-    expect(window.sessionStorage.length).toBe(0)
+    expectNoSessionInStorage(['tok-1', 'a@example.invalid'])
+  })
+
+  it('notices a session value in local or session storage', () => {
+    window.sessionStorage.setItem('theme', 'tok-1')
+    expect(() => expectNoSessionInStorage(['tok-1'])).toThrow()
+    window.sessionStorage.clear()
+
+    window.localStorage.setItem('last-login', 'a@example.invalid')
+    expect(() => expectNoSessionInStorage(['a@example.invalid'])).toThrow()
+    window.localStorage.clear()
+
+    window.sessionStorage.setItem('tok-1', '1')
+    expect(() => expectNoSessionInStorage(['tok-1'])).toThrow()
+    window.sessionStorage.clear()
+
+    window.sessionStorage.setItem(ROUTER_SCROLL_KEY, JSON.stringify({ '0': { left: 0, top: 0 } }))
+    expect(() => expectNoSessionInStorage(['tok-1'])).not.toThrow()
+    window.sessionStorage.setItem(ROUTER_SCROLL_KEY, JSON.stringify({ '0': 'tok-1' }))
+    expect(() => expectNoSessionInStorage(['tok-1'])).toThrow()
+    window.sessionStorage.clear()
   })
 
   it('treats a failed answer as signed out', async () => {
