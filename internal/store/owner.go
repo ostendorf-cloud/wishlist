@@ -389,6 +389,30 @@ func (s *OwnerStore) MoveWish(ctx context.Context, ownerID, wishID int64, direct
 	})
 }
 
+// MoveWishToList puts a wish at the end of another list. Both the wish and the
+// list have to be the owner's: a foreign wish and a foreign list are alike
+// ErrNotFound, so the caller cannot tell them from rows that do not exist. The
+// wish keeps its archived flag.
+func (s *OwnerStore) MoveWishToList(ctx context.Context, ownerID, wishID, listID int64) error {
+	tag, err := s.pool.Exec(ctx, `
+		update wishes w
+		set list_id = l.id,
+		    position = coalesce((select max(x.position) + 1 from wishes x where x.list_id = l.id), 0),
+		    updated_at = now()
+		from lists l
+		where w.id = $1
+		  and w.list_id in (select id from lists where owner_id = $2)
+		  and l.id = $3 and l.owner_id = $2`,
+		wishID, ownerID, listID)
+	if err != nil {
+		return fmt.Errorf("move wish to list: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // EventsSoon are the owner's lists whose date is within the given duration,
 // for a reminder.
 func (s *OwnerStore) EventsSoon(ctx context.Context, ownerID int64, within time.Duration) ([]List, error) {

@@ -16,6 +16,9 @@ The global baseline already applies here and is not repeated below.
   `migrations/` applied at startup, `owner.go` (`OwnerStore`) and `guest.go` (`GuestStore`).
   See "The store boundary".
 - `internal/dbtest` gives a test its own database on a real PostgreSQL, see "Store tests".
+- `internal/webapp` builds the public handler (govue's middleware chain, the SPA).
+  `internal/webapp/owner` is the owner API, `owner/dto` its request and response types,
+  `owner/ownertest` an in memory store for handler tests. See "The owner API".
 - `internal/depsync` checks that `go.mod` and `web/package.json` pin the same govue version,
   and that `web/pnpm-lock.yaml` still resolves govue's Vue package to its `/web`
   subdirectory; see "govue's two halves move together" below.
@@ -53,8 +56,8 @@ The store has two sides that share only the pool. `Core` owns `Open`, `Close`, `
 `reservations` table, and the comments the guests write are there too. A handler for the
 owner must be given an `OwnerStore` and nothing else: only then does the compiler stop it
 from calling a guest method. That is true once the wiring passes an `OwnerStore`. The handler
-layer test of ADR 0001 must forbid any reference to `GuestStore`, `Core.Guests` and `Core` in
-an owner handler. `boundary_test.go` needs no database and runs everywhere. Read it for what
+layer half is `internal/webapp/owner/boundary_test.go`, see "The owner API".
+`boundary_test.go` needs no database and runs everywhere. Read it for what
 it is: a guard against accidents by a contributor, not against a determined one. The real
 defence is the handler layer review and the code review. It checks:
 
@@ -112,6 +115,78 @@ concurrently` cannot be a migration. Extend the runner first. The password from 
 or `DB_PASSWORD_FILE` is whitespace trimmed by govue's `envconf`, from the variable and from
 the file alike.
 
+## The owner API
+
+Endpoints under `/api/v1/owner`, in `internal/webapp/owner`. Lists and wishes: create, read,
+edit, archive, delete, order a wish up or down, move a wish to another list. The route table
+(`Routes()`) is the list of endpoints. Ids are in the path, JSON bodies are strict (unknown
+fields, a second value and a missing or wrong content type are refused, 64 KiB at most), field
+errors come as stable keys (`required`, `too_long`, `invalid`) in `error.details`, never as text.
+
+### Blindness of the responses (ADR 0001, response layer)
+
+Mechanism: reflection over the response types. Every handler returns a typed value and one
+adapter in `owner.go` writes it, so the route table names exactly what can go out.
+`blindness_test.go` walks each response type: struct fields (embedded too), pointers, slices,
+arrays and maps. It fails on any named type of `internal/store` (which covers `Reservation`,
+`GuestWish`, `GuestList` and whatever is added to `guest.go` later), on a type or field whose Go
+or JSON name matches `reserv|guest|taken|bought|pledge`, on an interface (an `any` field is a
+violation), a func or a channel, and on a type with its own JSON or text encoding, which would
+hide its fields. `TestTheWalkCatchesEveryWayAReservationCanGetOut` proves each shape fails.
+Why reflection and not a generator or a lint rule: it follows the types the encoder really
+serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on every machine.
+
+- The one allowed name is `dto.List.ReserveOpen`: the owner's own switch for closing a list,
+  a setting and not data about what was taken. `allowedNames` in the test lists it; keep that
+  list short and reviewed.
+- Response types are explicit copies in `owner/dto`. A store struct is never sent as it is,
+  and `owner/dto` must not import the store.
+- `TestOnlyTheAdapterWritesAResponse` keeps handlers from writing around the adapter.
+- `TestNothingUnderWebappReachesTheGuestSide` is the handler layer rule of the store boundary:
+  code under `internal/webapp` may name only `OwnerStore`, `ErrNotFound`, `List`, `Wish`,
+  `ListInput` and `WishInput` of the store, and never `Guests`, `Owners`, `Core` or
+  `GuestStore`. It reads names, so it does not catch reflection or generated code.
+
+### Who the owner is
+
+`owner.Resolver` (`func(r *http.Request) (ownerID int64, ok bool)`) is the only source of the
+owner id. The id is an `int64`, like the store's. Handlers answer 401 when it is not ok and
+never read an owner id from the body, the query or the path.
+
+The owner's sign in is issue 4 and waits for a govue release. Until then
+`cmd/wishlist/resolver.go` (`resolveOwner`) returns a resolver that always answers not ok, so
+every owner endpoint answers 401. Issue 4 plugs in at two places, both in `cmd/wishlist`:
+
+1. `resolveOwner` returns a resolver that reads govue's session and maps it to an owner id
+   (`UpsertOwner` by subject).
+2. `buildHandler` in `main.go` passes the matching `csrf.Expected` as
+   `webapp.Config.CSRFExpected` (`csrf.Token(key, session.ID)`), and the page renders the token
+   into `<meta name="csrf-token">`, which `web/src/api/owner.ts` already reads. Until then only
+   the protector's origin check applies (Sec-Fetch-Site and Origin), which refuses cross site
+   writes.
+
+Development owner: with `WISHLIST_DEV_OWNER=<name>` the resolver signs every request in as one
+account, created on first use. `config.Load` refuses it unless `ADDR` is a loopback address, or
+`WISHLIST_DEV_OWNER_ANY_LISTENER=true` says the port is reachable on loopback by other means.
+`docker-compose.yaml` sets both: the container listens on every interface and the port is
+published on `127.0.0.1` only. The Helm chart passes neither and has no free form `env`, so a
+deployment cannot turn it on by accident. Remove the development owner when issue 4 lands, or
+keep it for compose only. To try the SPA: `docker compose up --build`, open
+`http://127.0.0.1:8080`.
+
+### Refusals
+
+A row of somebody else, a row that does not exist and a malformed id are one answer: 404 with
+the fixed body of `refusal` in `handlers.go`. A bad body is refused before the store is asked,
+so the answer to it does not depend on whether the row exists. The store scopes every query by
+owner id and returns `ErrNotFound` for a foreign row; `fail` maps only that to the refusal.
+Moving a wish to a list needs both rows to be the owner's.
+
+Left out on purpose: images (the keys that delete returns are counted in a debug log line, the
+objects are not deleted: image milestone), share tokens, guest access, translations, link
+import. Security headers (CSP) are not set by this handler yet; they need a check against the
+built bundle in a browser.
+
 ## Store tests
 
 The tests against a real PostgreSQL (`internal/store/db_test.go`,
@@ -146,11 +221,11 @@ This repository rewrites the existing `old_wishlist` service, a Go application w
 server-rendered templates, into a Go API with a Vue SPA on govue, so it looks and behaves
 like the other `ostendorf-cloud` applications. This milestone is the scaffold alone: the
 embedded SPA shell and the Go entry point serving it, with health, readiness and metrics on
-govue's admin listener, plus the PostgreSQL schema and its store (no HTTP surface on top of
-it yet). Left out, tracked as later milestones:
+govue's admin listener, plus the PostgreSQL schema and its store, and the owner's API and SPA
+on top of it. Left out, tracked as later milestones:
 
-- owner login through OIDC
-- the HTTP API for lists and wishes
+- owner login through OIDC (issue 4; the owner API takes its owner from a resolver, see "The
+  owner API")
 - images, kept in an object store
 - the HTTP API for share tokens, reserving and comments
 - two languages
@@ -170,4 +245,7 @@ Apache-2.0, like the other `ostendorf-cloud` repositories. See `LICENSE`.
 
 ## Deviations
 
-- None.
+- The header's color mode switch is `web/src/components/ThemeToggle.vue`, a thin stand in on
+  `GovueButton` and `useTheme`. `GovueThemeSwitch` is merged in govue but not in v0.4.0, the
+  release this repository pins. Replace it when the pin moves.
+- All visible SPA strings are English in `web/src/messages.ts` until issue 10.

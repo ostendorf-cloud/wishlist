@@ -45,8 +45,9 @@ authorization check alone is not the decision this record makes.
   `old_wishlist`, needs the same careful handling `dialog.go` gave it, or the enforcing test gives
   a false result.
 - The enforcing test itself has to be rewritten for JSON response types and HTTP handlers in place
-  of Go templates and page-data structs; until that test exists in this repository, the guarantee
-  rests on review alone. See the open question on this in `docs/concepts/wishlist.md`.
+  of Go templates and page-data structs. It is built as reflection over the response types of
+  the owner API's route table, in `internal/webapp/owner/blindness_test.go`; `AGENTS.md`
+  ("The owner API") records the mechanism and why.
 
 ## Alternatives
 

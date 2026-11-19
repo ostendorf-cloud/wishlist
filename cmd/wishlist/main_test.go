@@ -5,11 +5,14 @@ package main
 
 import (
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/health"
+
+	"github.com/ostendorf-cloud/wishlist/internal/webapp/owner/ownertest"
 )
 
 // TestEmbeddedDistBuildsAWorkingHandler proves the embedded dist filesystem is
@@ -22,8 +25,21 @@ func TestEmbeddedDistBuildsAWorkingHandler(t *testing.T) {
 		t.Fatalf("fs.Sub(distFS, \"dist\") error = %v", err)
 	}
 
-	if _, err := buildHandler(); err != nil {
+	handler, err := buildHandler(slog.New(slog.DiscardHandler), ownertest.New(), resolveOwner("", nil, slog.New(slog.DiscardHandler)))
+	if err != nil {
 		t.Fatalf("buildHandler() error = %v", err)
+	}
+
+	// Until the sign in exists nobody is an owner, and the SPA still loads.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/owner/lists", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/v1/owner/lists = %d, want 401", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET / = %d, want 200", rec.Code)
 	}
 
 	if _, err := fs.Stat(dist, "index.html"); err != nil {

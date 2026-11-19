@@ -10,6 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/netip"
+	"regexp"
 	"slices"
 	"time"
 
@@ -28,6 +31,27 @@ type Config struct {
 	LogLevel  slog.Level
 	// Database is the PostgreSQL connection.
 	Database Database
+	// DevOwner, when set, signs every request in as this one development
+	// account. It exists only until the owner sign in (issue 4) and is
+	// refused unless the listener is loopback, see Load.
+	DevOwner string
+}
+
+// devOwnerName is what a development owner may be called.
+var devOwnerName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
+
+// loopbackListener says whether addr binds the loopback interface only. An
+// empty host, 0.0.0.0 and :: bind every interface and are not loopback.
+func loopbackListener(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 // Database is the PostgreSQL connection. It is built from separate fields,
@@ -132,6 +156,26 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if !slices.Contains(sslModes, cfg.Database.SSLMode) {
 		problems = append(problems, fmt.Errorf("envconf: DB_SSLMODE: must be one of %v, got %q", sslModes, cfg.Database.SSLMode))
+	}
+
+	// The development owner is a sign in without a password, so it is opt in
+	// twice. The name turns it on. It is then honoured only when the public
+	// listener is loopback, or when the operator states that the listener is
+	// reachable from the loopback interface only by other means: docker
+	// compose binds the container to every interface and publishes the port on
+	// 127.0.0.1. The Helm chart passes neither variable.
+	cfg.DevOwner = l.String("WISHLIST_DEV_OWNER", "")
+	anyListener := l.Bool("WISHLIST_DEV_OWNER_ANY_LISTENER", false)
+	if cfg.DevOwner != "" {
+		if !devOwnerName.MatchString(cfg.DevOwner) {
+			problems = append(problems, errors.New("envconf: WISHLIST_DEV_OWNER: must be 1 to 40 characters of a-z, 0-9, _ and -"))
+		}
+		if !anyListener && !loopbackListener(cfg.Addr) {
+			problems = append(problems, fmt.Errorf("envconf: WISHLIST_DEV_OWNER: refused, ADDR %q is not a loopback address; "+
+				"set WISHLIST_DEV_OWNER_ANY_LISTENER=true only where the port is published on 127.0.0.1", cfg.Addr))
+		}
+	} else if anyListener {
+		problems = append(problems, errors.New("envconf: WISHLIST_DEV_OWNER_ANY_LISTENER: has no effect without WISHLIST_DEV_OWNER"))
 	}
 
 	if err := errors.Join(append(problems, l.Err())...); err != nil {

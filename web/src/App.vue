@@ -2,15 +2,23 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { GovuePage, GovueSkipLink } from '@ostendorf-cloud/govue'
+import { GovueHeader, GovueSkipLink, GovueToastHost } from '@ostendorf-cloud/govue'
+import { RouterLink, RouterView } from 'vue-router'
+
+import ThemeToggle from './components/ThemeToggle.vue'
+import { messages } from './messages'
 </script>
 
 <template>
-  <GovueSkipLink />
-  <GovuePage title="wishlist" lead="Shared wish lists with reservations the owner never sees.">
-    <p class="text-text-muted">
-      This page is a placeholder. Lists, wishes and guest reservations are not built yet; see
-      AGENTS.md for what this milestone leaves out.
-    </p>
-  </GovuePage>
+  <GovueSkipLink>{{ messages.app.skip }}</GovueSkipLink>
+  <GovueHeader>
+    <template #brand>
+      <RouterLink :to="{ name: 'dashboard' }" class="text-text">{{ messages.app.name }}</RouterLink>
+    </template>
+    <template #actions>
+      <ThemeToggle />
+    </template>
+  </GovueHeader>
+  <RouterView />
+  <GovueToastHost />
 </template>
