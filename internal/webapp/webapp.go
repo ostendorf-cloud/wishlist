@@ -109,13 +109,37 @@ func Handler(cfg Config) (http.Handler, error) {
 	), nil
 }
 
-// spa serves the built files, and index.html for any other path so the
-// router in the browser can take a deep link. A path with an extension that is
-// not there is a plain 404: a missing script is not a page.
+// spaRoutes are the first path segments of the routes in web/src/router.ts.
+// Only these get index.html for a deep link. Every other path that is not a
+// built file is a plain 404, so the public port never answers /metrics,
+// /healthz or an unknown path with an HTML page (the smoke test pins that).
+// TestSPARoutesCoverTheRouter keeps this list and the router in step.
+var spaRoutes = []string{"/lists", "/wishes"}
+
+func isSPARoute(p string) bool {
+	if path.Ext(p) != "" {
+		return false
+	}
+	for _, prefix := range spaRoutes {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// spa serves the built files and, for GET and HEAD of a route of the SPA,
+// index.html so the router in the browser can take a deep link. Everything
+// else is a plain 404.
 func spa(dist fs.FS) http.Handler {
 	files := http.FileServerFS(dist)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.NotFound(w, r)
+			return
+		}
+		clean := path.Clean("/" + r.URL.Path)
+		name := strings.TrimPrefix(clean, "/")
 		if name == "" {
 			name = "."
 		}
@@ -123,7 +147,7 @@ func spa(dist fs.FS) http.Handler {
 			files.ServeHTTP(w, r)
 			return
 		}
-		if path.Ext(name) != "" {
+		if !isSPARoute(clean) {
 			http.NotFound(w, r)
 			return
 		}

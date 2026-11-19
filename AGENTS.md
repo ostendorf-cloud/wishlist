@@ -191,6 +191,12 @@ so the answer to it does not depend on whether the row exists. The store scopes 
 owner id and returns `ErrNotFound` for a foreign row; `fail` maps only that to the refusal.
 Moving a wish to a list needs both rows to be the owner's.
 
+The public listener serves built files, and `index.html` only for GET and HEAD of the SPA's
+own routes (`spaRoutes` in `webapp.go`, kept in step with `web/src/router.ts` by a test).
+Everything else is a 404: JSON under `/api/`, plain text elsewhere. `/metrics`, `/healthz` and
+`/readyz` are on the admin listener only, and `scripts/smoke-test-image.sh` pins that. A new
+top level route in the SPA needs its first segment in `spaRoutes`.
+
 The rate limiter keys by connection address. Behind an ingress everyone shares one bucket, so
 it needs a trusted proxy setting before the first deployment.
 

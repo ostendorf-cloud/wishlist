@@ -6,6 +6,8 @@ package webapp
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -116,22 +118,96 @@ func TestUnknownAPIPathsAreJSONAndNeverTheSPA(t *testing.T) {
 	}
 }
 
-func TestTheSPAIsServedWithAFallbackForDeepLinks(t *testing.T) {
+func TestTheSPAIsServedForItsRoutesOnly(t *testing.T) {
 	h := newHandler(t, true, nil)
 	cases := []struct {
+		name   string
+		method string
 		target string
 		want   int
-		body   string
+		body   string // a fragment the body must hold, "" for none
+		not    string // a fragment the body must not hold
 	}{
-		{"/", 200, "spa"},
-		{"/lists/12", 200, "spa"},
-		{"/assets/app.js", 200, "js"},
-		{"/assets/missing.js", 404, ""},
+		{"the root", "GET", "/", 200, "spa", ""},
+		{"a list of the SPA", "GET", "/lists/3", 200, "spa", ""},
+		{"a new list", "GET", "/lists/new", 200, "spa", ""},
+		{"a wish form", "GET", "/wishes/4/edit", 200, "spa", ""},
+		{"HEAD of an SPA route", "HEAD", "/lists/3", 200, "", "spa"},
+		{"a built file", "GET", "/assets/app.js", 200, "js", ""},
+		{"a missing asset", "GET", "/assets/x.js", 404, "", "spa"},
+		{"a missing file in an SPA route", "GET", "/lists/3.js", 404, "", "spa"},
+		{"metrics belong to the admin listener", "GET", "/metrics", 404, "", "spa"},
+		{"healthz", "GET", "/healthz", 404, "", "spa"},
+		{"readyz", "GET", "/readyz", 404, "", "spa"},
+		{"an unknown path", "GET", "/nothing/here", 404, "", "spa"},
+		// The mux redirects to the cleaned path, which is then a 404 itself.
+		{"dot segments are cleaned by the mux", "GET", "/lists/../metrics", 307, "", "spa"},
+		{"a prefix is not a route", "GET", "/listsx", 404, "", "spa"},
+		{"a write to an SPA route", "POST", "/lists/3", 404, "", "spa"},
+		{"unknown API path is JSON", "GET", "/api/v1/nothing", 404, `"not_found"`, "spa"},
+		{"the bare API prefix is JSON", "GET", "/api/", 404, `"not_found"`, "spa"},
+		{"an API path with an extension is JSON", "GET", "/api/v1/x.js", 404, `"not_found"`, "spa"},
 	}
 	for _, tc := range cases {
-		rec := serve(t, h, "GET", tc.target, "", nil)
-		if rec.Code != tc.want || !strings.Contains(rec.Body.String(), tc.body) {
-			t.Errorf("%s = %d %q", tc.target, rec.Code, rec.Body)
+		t.Run(tc.name, func(t *testing.T) {
+			rec := serve(t, h, tc.method, tc.target, "", nil)
+			if rec.Code != tc.want || !strings.Contains(rec.Body.String(), tc.body) ||
+				(tc.not != "" && strings.Contains(rec.Body.String(), tc.not)) {
+				t.Errorf("%s %s = %d %q", tc.method, tc.target, rec.Code, rec.Body)
+			}
+		})
+	}
+	rec := serve(t, h, "GET", "/api/v1/nothing", "", nil)
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unknown API path Content-Type = %q, want JSON", ct)
+	}
+}
+
+// What scripts/smoke-test-image.sh pins on the public listener, over a real
+// listener: /metrics is not here, / is the shell, /index.html is canonicalised.
+func TestThePublicListenerAnswersWhatTheSmokeTestExpects(t *testing.T) {
+	srv := httptest.NewServer(newHandler(t, false, nil))
+	t.Cleanup(srv.Close)
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	for path, want := range map[string]int{
+		"/metrics":    http.StatusNotFound,
+		"/":           http.StatusOK,
+		"/index.html": http.StatusMovedPermanently,
+	} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("GET %s = %d, want %d", path, resp.StatusCode, want)
+		}
+	}
+}
+
+// Every first path segment of the router in the SPA has to be in spaRoutes,
+// or a deep link to it would be a 404 from the server.
+func TestSPARoutesCoverTheRouter(t *testing.T) {
+	src, err := os.ReadFile("../../web/src/router.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := regexp.MustCompile(`path: '(/[^':]*)`).FindAllStringSubmatch(string(src), -1)
+	if len(found) < 5 {
+		t.Fatalf("found %d paths in router.ts, the pattern is stale", len(found))
+	}
+	for _, m := range found {
+		route := strings.TrimSuffix(m[1], "/")
+		if route == "" {
+			continue // the root is served as a file
+		}
+		if !isSPARoute(route) && !isSPARoute(route+"/x") {
+			t.Errorf("router path %q is not in spaRoutes", m[1])
 		}
 	}
 }
