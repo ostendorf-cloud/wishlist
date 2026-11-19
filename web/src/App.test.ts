@@ -4,16 +4,33 @@
 import { useTheme } from '@ostendorf-cloud/govue'
 import { screen, waitFor, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
 
 import { fakeApi, renderApp } from './testing'
 
 // main.ts starts the theme once, outside any component, so its watcher lives as
 // long as the page. A test does the same, or the first component to call
 // useTheme would own the watcher and take it down when it unmounts.
-useTheme({ theme: 'wishlist' })
+const { setMode } = useTheme({ theme: 'wishlist' })
+
+function storedChoice(): unknown {
+  const raw = window.localStorage.getItem('govue-theme')
+  return raw === null ? null : JSON.parse(raw)
+}
 
 describe('App', () => {
+  // The theme state is shared by the whole page, so each test starts on System
+  // with nothing stored, as a first visit does.
+  beforeEach(async () => {
+    setMode('system')
+    await nextTick()
+    window.localStorage.clear()
+  })
+  afterEach(() => {
+    window.localStorage.clear()
+  })
+
   it('has a banner, one main landmark and the dashboard as the start page', async () => {
     await renderApp(fakeApi())
 
@@ -49,6 +66,45 @@ describe('App', () => {
     await userEvent.click(dark)
     await waitFor(() => expect(document.documentElement.dataset.mode).toBe('dark'))
     expect(dark).toBeChecked()
+  })
+
+  it('stores the choice under the govue key and follows it on the page element', async () => {
+    await renderApp(fakeApi())
+    const group = within(screen.getByRole('banner')).getByRole('radiogroup')
+
+    await userEvent.click(within(group).getByRole('radio', { name: 'Dark' }))
+    await waitFor(() => expect(document.documentElement.dataset.mode).toBe('dark'))
+    expect(storedChoice()).toEqual({ theme: 'wishlist', mode: 'dark' })
+
+    await userEvent.click(within(group).getByRole('radio', { name: 'Light' }))
+    await waitFor(() => expect(document.documentElement.dataset.mode).toBe('light'))
+    expect(storedChoice()).toEqual({ theme: 'wishlist', mode: 'light' })
+  })
+
+  it('removes the mode attribute for System and leaves no stale value', async () => {
+    await renderApp(fakeApi())
+    const group = within(screen.getByRole('banner')).getByRole('radiogroup')
+
+    await userEvent.click(within(group).getByRole('radio', { name: 'Dark' }))
+    await waitFor(() => expect(document.documentElement.dataset.mode).toBe('dark'))
+
+    await userEvent.click(within(group).getByRole('radio', { name: 'System' }))
+    await waitFor(() => expect(document.documentElement).not.toHaveAttribute('data-mode'))
+    expect(within(group).getByRole('radio', { name: 'System' })).toBeChecked()
+    // govue keeps the key and stores "system" itself, so a reload stays on System.
+    expect(storedChoice()).toEqual({ theme: 'wishlist', mode: 'system' })
+    expect(document.documentElement.dataset.theme).toBe('wishlist')
+  })
+
+  it('renders govue theme switch in the header: a radiogroup with three radios', async () => {
+    await renderApp(fakeApi())
+
+    const group = within(screen.getByRole('banner')).getByRole('radiogroup', { name: 'Theme' })
+    expect(
+      within(group)
+        .getAllByRole('radio')
+        .map((r) => r.textContent?.trim()),
+    ).toEqual(['System', 'Light', 'Dark'])
   })
 
   it('uses govue theme switch in the header and keeps no stand in', () => {
