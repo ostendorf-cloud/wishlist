@@ -13,12 +13,6 @@ export const messages = {
     name: 'Wishlist',
     home: 'Your lists',
     skip: 'Skip to content',
-    theme: {
-      label: 'Color mode',
-      light: 'Light',
-      dark: 'Dark',
-      system: 'System',
-    },
   },
 
   auth: {

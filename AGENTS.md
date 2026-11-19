@@ -365,7 +365,4 @@ Apache-2.0, like the other `ostendorf-cloud` repositories. See `LICENSE`.
 
 ## Deviations
 
-- The header's color mode switch is `web/src/components/ThemeToggle.vue`, a thin stand in on
-  `GovueButton` and `useTheme`. `GovueThemeSwitch` is merged in govue but not in v0.4.0, the
-  release this repository pins. Replace it when the pin moves.
 - All visible SPA strings are English in `web/src/messages.ts` until issue 10.
