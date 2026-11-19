@@ -23,9 +23,11 @@ The global baseline already applies here and is not repeated below.
   and that `web/pnpm-lock.yaml` still resolves govue's Vue package to its `/web`
   subdirectory; see "govue's two halves move together" below.
 - `web/` is the Vue SPA, consuming govue's Vue package as a pnpm git dependency.
-  `web/src/theme/wishlist.css` fills govue's design token contract with a neutral
-  placeholder palette, checked against WCAG 2.2 AA by `web/src/theme/contrast.test.ts`; no
-  brand palette has been chosen yet, see "Scope of this milestone" below.
+  `web/src/theme/wishlist.css` fills govue's design token contract. It is generated from
+  the two seed colours in `web/src/theme/seeds.json` with govue's `generate-theme` script
+  (`node <govue>/web/scripts/generate-theme.ts --config src/theme/seeds.json --out
+  src/theme/wishlist.css`, Node 24 or later). Change a seed, regenerate, never edit the CSS
+  by hand. `web/src/theme/contrast.test.ts` checks it against WCAG 2.2 AA.
 - `charts/wishlist/` is the Helm chart for this one workload. `docker-compose.yaml` is a
   local development stack.
 
