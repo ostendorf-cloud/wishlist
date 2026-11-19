@@ -151,6 +151,12 @@ serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on 
 - Response types are explicit copies in `owner/dto`. A store struct is never sent as it is,
   and `owner/dto` must not import the store.
 - `TestOnlyTheAdapterWritesAResponse` keeps handlers from writing around the adapter.
+- `internal/legal` is the one writer outside the adapter on the public mux (the legal
+  redirects and the four prerendered pages, no data). `TestOnlyKnownHelpersGetThePublicMux`
+  allows exactly `ownerAPI.Register` and `legal.Register` to receive the mux in
+  `internal/webapp`, and `internal/legal/boundary_test.go` limits that package to the standard
+  library and `govue/language`, so it can never reach the store. A third helper or an import
+  of this module there fails a test.
 - `TestNothingUnderWebappReachesTheGuestSide` is the handler layer rule of the store boundary:
   code under `internal/webapp` may name only `OwnerStore`, `ErrNotFound`, `List`, `Wish`,
   `ListInput` and `WishInput` of the store, and never `Guests`, `Owners`, `Core` or
@@ -204,6 +210,28 @@ Left out on purpose: images (the keys that delete returns are counted in a debug
 objects are not deleted: image milestone), share tokens, guest access, translations, link
 import. Security headers (CSP) are not set by this handler yet; they need a check against the
 built bundle in a browser.
+
+## Legal pages
+
+The site has its own imprint and privacy page in German and English, built on govue's legal
+structure. govue ships no text: the texts are `web/src/legal/ImprintPage.vue` and
+`PrivacyPage.vue`, and they may state only what the code does today. A change that adds a
+cookie, a stored field, a log field, an analytics call, guests or a sign in changes the privacy
+text in the same pull request. The site has no terms, so `/terms` and `/agb` do not exist.
+
+- `internal/legal` mounts `language.HandleLegal` (the redirects `/imprint`, `/privacy`,
+  `/impressum`, `/datenschutz`, `/datenschutzerklaerung`) and serves the four canonical pages
+  `/de/imprint`, `/en/imprint`, `/de/privacy`, `/en/privacy` as exact patterns from the built
+  `dist/<code>/<page>/index.html`. It sits outside `internal/webapp` because the handler layer
+  tests allow no other writer of a response body there. `webapp.go` mounts it outside the
+  route chain, so these paths need no entry in `spaRoutes`.
+- `pnpm run build` is `vite build`, then `prerender` (`src/prerender.ts` through
+  `govue-prerender`, which writes the four pages and `sitemap.xml` into `cmd/wishlist/dist`),
+  then `check:legal` (`govue-check-legal`). The check fails the build when a prerendered page
+  lacks the exact footer links of its language. The origin of the sitemap is `ORIGIN` in
+  `web/src/legal/site.ts`.
+- The router holds the four legal paths from govue's `legalRoutes`, so the bundle that loads
+  on a legal page shows it instead of redirecting to the dashboard.
 
 ## Store tests
 

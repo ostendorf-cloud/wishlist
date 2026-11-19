@@ -2,7 +2,7 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { GovueHeader, GovueSkipLink, GovueToastHost } from '@ostendorf-cloud/govue'
+import { GovueFooter, GovueHeader, GovueSkipLink, GovueToastHost } from '@ostendorf-cloud/govue'
 import { RouterLink, RouterView } from 'vue-router'
 
 import ThemeToggle from './components/ThemeToggle.vue'
@@ -20,5 +20,6 @@ import { messages } from './messages'
     </template>
   </GovueHeader>
   <RouterView />
+  <GovueFooter :legal="['imprint', 'privacy']" />
   <GovueToastHost />
 </template>

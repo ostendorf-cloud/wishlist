@@ -27,6 +27,7 @@ import (
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/ratelimit"
 
+	"github.com/ostendorf-cloud/wishlist/internal/legal"
 	"github.com/ostendorf-cloud/wishlist/internal/webapp/owner"
 )
 
@@ -100,6 +101,12 @@ func Handler(cfg Config) (http.Handler, error) {
 	// Anything else under /api is an unknown endpoint in the error shape,
 	// never the SPA's index page.
 	mux.Handle("/api/", route(api.NotFoundHandler()))
+	// The legal pages need no session or CSRF check, so they sit outside the
+	// route chain. The outer chain below still applies. They are exact
+	// patterns, so spaRoutes needs no entry for /de or /en.
+	if err := legal.Register(mux, cfg.Dist); err != nil {
+		return nil, err
+	}
 	mux.Handle("/", spa(cfg.Dist))
 
 	return middleware.Chain(mux,

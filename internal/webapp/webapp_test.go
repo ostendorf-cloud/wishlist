@@ -212,6 +212,53 @@ func TestSPARoutesCoverTheRouter(t *testing.T) {
 	}
 }
 
+// The legal pages are wired through the real handler: redirects, pages from
+// the build, and everything around them still a 404.
+func TestTheLegalPagesAreWiredOutsideTheRouteChain(t *testing.T) {
+	dist := fstest.MapFS{
+		"index.html":            {Data: []byte("<html>spa</html>")},
+		"de/imprint/index.html": {Data: []byte("<html>de imprint</html>")},
+		"de/privacy/index.html": {Data: []byte("<html>de privacy</html>")},
+		"en/imprint/index.html": {Data: []byte("<html>en imprint</html>")},
+		"en/privacy/index.html": {Data: []byte("<html>en privacy</html>")},
+		"de/other/index.html":   {Data: []byte("<html>other</html>")},
+		"sitemap.xml":           {Data: []byte("<urlset/>")},
+	}
+	h, err := Handler(Config{
+		Store: ownertest.New(),
+		Owner: func(*http.Request) (int64, bool) { return 1, false },
+		Dist:  dist,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		target, location, body string
+		want                   int
+	}{
+		{"/imprint", "/de/imprint", "", 302},
+		{"/impressum", "/de/imprint", "", 302},
+		{"/datenschutz", "/de/privacy", "", 302},
+		{"/datenschutzerklaerung", "/de/privacy", "", 302},
+		{"/de/imprint", "", "de imprint", 200},
+		{"/en/privacy", "", "en privacy", 200},
+		{"/sitemap.xml", "", "urlset", 200},
+		{"/terms", "", "", 404},
+		{"/agb", "", "", 404},
+		{"/de/terms", "", "", 404},
+		{"/de/other", "", "", 404},
+		{"/de/imprint/", "", "", 404},
+		{"/metrics", "", "", 404},
+		{"/nothing", "", "", 404},
+	} {
+		rec := serve(t, h, "GET", tc.target, "", nil)
+		if rec.Code != tc.want || rec.Header().Get("Location") != tc.location ||
+			!strings.Contains(rec.Body.String(), tc.body) {
+			t.Errorf("GET %s = %d %q %q", tc.target, rec.Code, rec.Header().Get("Location"), rec.Body)
+		}
+	}
+}
+
 func TestHandlerRequiresItsParts(t *testing.T) {
 	if _, err := Handler(Config{Store: ownertest.New(), Owner: func(*http.Request) (int64, bool) { return 1, true }}); err == nil {
 		t.Error("Handler without a dist succeeded")

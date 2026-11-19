@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && pnpm run prerender && pnpm run check:legal",
+    "prerender": "vite build --ssr src/prerender.ts --outDir .prerender-ssr --emptyOutDir && govue-prerender --entry .prerender-ssr/prerender.js --template ../cmd/wishlist/dist/index.html --out-dir ../cmd/wishlist/dist && rm -rf .prerender-ssr",
+    "check:legal": "govue-check-legal --dir ../cmd/wishlist/dist",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
