@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@ostendorf-cloud/govue':
-        specifier: ostendorf-cloud/govue#v0.4.0&path:/web
-        version: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/478702ca39c27ef1df806bc875235823c20ea8ba#path:/web(tailwindcss@4.3.5)(vue@3.5.45(typescript@5.9.3))
+        specifier: ostendorf-cloud/govue#v0.5.0&path:/web
+        version: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/1059877bbc8848e6adf4b7e175abc9b6c10aee42#path:/web(tailwindcss@4.3.5)(vue-i18n@11.4.22(vue@3.5.45(typescript@5.9.3)))(vue@3.5.45(typescript@5.9.3))
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.5
@@ -203,6 +203,22 @@ packages:
   '@internationalized/number@3.6.9':
     resolution: {integrity: sha512-GgWy2caO/+hV9sT/oCTWGHvbjmJMPT9kkXzoKRLnkEq7adghhR7UprhvY9sXrKfrp3NcDfhF6QQHXR1KfQbB8g==}
 
+  '@intlify/core-base@11.4.22':
+    resolution: {integrity: sha512-qEdP+gpuppvC2oKjVr8yZso1E7CuIvArQViule5b6n27ZAQb1QJ7LdiWI7mosMBxNCIobJXw6KBgQWvX7CmHVg==}
+    engines: {node: '>= 22'}
+
+  '@intlify/devtools-types@11.4.22':
+    resolution: {integrity: sha512-zRzElvuCD+j8Sv+LQBf1X8Ve7G61gQUw4WwHDbrxoY1+3FrnRZ1kMgWKGDNyG/qMntwa31h+bQZ3sRTkCqrgMQ==}
+    engines: {node: '>= 22'}
+
+  '@intlify/message-compiler@11.4.22':
+    resolution: {integrity: sha512-X3ButMf+8TvO8kks3xA17tglGeiFLwA2S3TkxHxurRLpz8NpDlN2t9pjHdImKtmjruB6B9I+WgkDWz00zDYkTw==}
+    engines: {node: '>= 22'}
+
+  '@intlify/shared@11.4.22':
+    resolution: {integrity: sha512-RHAe7pwIYDt+AkQs9xQBdMLrux7+O4R8p3FKC47ewpEGhKqNzzJ2vkQ4gApAF/LMzj80nRUwIwQDn0uF/sgnqQ==}
+    engines: {node: '>= 22'}
+
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
 
@@ -250,12 +266,15 @@ packages:
   '@one-ini/wasm@0.2.1':
     resolution: {integrity: sha512-TUqERXGNTifZ9y2g3wPxQrw3HpHv/02DsW3D90T9x0hhonrL1ZqpSmNrU2XkoIq0fP1N6gZfVQzy2Fw1ZvGBNg==}
 
-  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/478702ca39c27ef1df806bc875235823c20ea8ba#path:/web':
-    resolution: {gitHosted: true, integrity: sha512-Smx0EqQ3pEo5XuQeo4pZkXRo2iNuT0Bso3Yg4eCfwBV83ttnklyPIkcq+3OR09miDp6ust0ycazWhmaPIS97ZA==, path: /web, tarball: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/478702ca39c27ef1df806bc875235823c20ea8ba}
-    version: 0.4.0
+  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/1059877bbc8848e6adf4b7e175abc9b6c10aee42#path:/web':
+    resolution: {gitHosted: true, integrity: sha512-xPKeQD3tIoXchaT7CuBAr8XaLozRhE9f+MwNgHLnw4eoowqnLX3p3MCpkKUQ+piachfTrXG+hgSo1t1DVLNJRQ==, path: /web, tarball: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/1059877bbc8848e6adf4b7e175abc9b6c10aee42}
+    version: 0.5.0
+    engines: {node: '>=24'}
+    hasBin: true
     peerDependencies:
       tailwindcss: ^4.1.0
       vue: ^3.5.0
+      vue-i18n: ^11.1.5
 
   '@oxc-project/types@0.156.0':
     resolution: {integrity: sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==}
@@ -1577,6 +1596,12 @@ packages:
     peerDependencies:
       eslint: ^8.57.0 || ^9.0.0 || ^10.0.0
 
+  vue-i18n@11.4.22:
+    resolution: {integrity: sha512-ATfJU6iSSKnUYXubiwH4oScLYIgM2N3KcoqaUD5v5EM2OANePbON7l7CqWsUQhPNHZvszrk9rItqebr8Vo5A5Q==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      vue: ^3.0.0
+
   vue-router@4.6.5:
     resolution: {integrity: sha512-HBoGqixpB2ej1kI17NotdOatUdKIsi3yfOQ5vhwAhcoHk90+JtwtIy7MEeOqdPi1+npmQVMEu5F+Hvw+3TU48w==}
     peerDependencies:
@@ -1765,6 +1790,24 @@ snapshots:
     dependencies:
       '@swc/helpers': 0.5.24
 
+  '@intlify/core-base@11.4.22':
+    dependencies:
+      '@intlify/devtools-types': 11.4.22
+      '@intlify/message-compiler': 11.4.22
+      '@intlify/shared': 11.4.22
+
+  '@intlify/devtools-types@11.4.22':
+    dependencies:
+      '@intlify/core-base': 11.4.22
+      '@intlify/shared': 11.4.22
+
+  '@intlify/message-compiler@11.4.22':
+    dependencies:
+      '@intlify/shared': 11.4.22
+      source-map-js: 1.2.2
+
+  '@intlify/shared@11.4.22': {}
+
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -1813,11 +1856,12 @@ snapshots:
 
   '@one-ini/wasm@0.2.1': {}
 
-  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/478702ca39c27ef1df806bc875235823c20ea8ba#path:/web(tailwindcss@4.3.5)(vue@3.5.45(typescript@5.9.3))':
+  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/1059877bbc8848e6adf4b7e175abc9b6c10aee42#path:/web(tailwindcss@4.3.5)(vue-i18n@11.4.22(vue@3.5.45(typescript@5.9.3)))(vue@3.5.45(typescript@5.9.3))':
     dependencies:
       reka-ui: 2.11.0(vue@3.5.45(typescript@5.9.3))
       tailwindcss: 4.3.5
       vue: 3.5.45(typescript@5.9.3)
+      vue-i18n: 11.4.22(vue@3.5.45(typescript@5.9.3))
 
   '@oxc-project/types@0.156.0': {}
 
@@ -3023,6 +3067,14 @@ snapshots:
       semver: 7.8.6
     transitivePeerDependencies:
       - supports-color
+
+  vue-i18n@11.4.22(vue@3.5.45(typescript@5.9.3)):
+    dependencies:
+      '@intlify/core-base': 11.4.22
+      '@intlify/devtools-types': 11.4.22
+      '@intlify/shared': 11.4.22
+      '@vue/devtools-api': 6.6.4
+      vue: 3.5.45(typescript@5.9.3)
 
   vue-router@4.6.5(vue@3.5.45(typescript@5.9.3)):
     dependencies:
