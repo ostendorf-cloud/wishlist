@@ -6,18 +6,16 @@ import { GovueFooter, GovueHeader, GovueSkipLink, GovueToastHost } from '@ostend
 import { RouterLink, RouterView } from 'vue-router'
 
 import SignOutButton from './components/SignOutButton.vue'
-import ThemeToggle from './components/ThemeToggle.vue'
 import { messages } from './messages'
 </script>
 
 <template>
   <GovueSkipLink>{{ messages.app.skip }}</GovueSkipLink>
-  <GovueHeader>
+  <GovueHeader theme-switch>
     <template #brand>
       <RouterLink :to="{ name: 'dashboard' }" class="text-text">{{ messages.app.name }}</RouterLink>
     </template>
     <template #actions>
-      <ThemeToggle />
       <SignOutButton />
     </template>
   </GovueHeader>
