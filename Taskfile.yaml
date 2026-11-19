@@ -112,6 +112,12 @@ tasks:
           echo "values.schema.json lets replicaCount 2 through" >&2
           exit 1
         fi
+      # A typo under config must fail, not be ignored silently.
+      - |
+        if helm template charts/wishlist --set config.siteurl=https://wishes.example.com >/dev/null 2>&1; then
+          echo "values.schema.json lets the typo config.siteurl through" >&2
+          exit 1
+        fi
 
   build:
     desc: Compile the wishlist binary

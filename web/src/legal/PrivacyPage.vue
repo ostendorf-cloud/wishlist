@@ -10,8 +10,9 @@ import { GovueLegalPage, useLanguage } from '@ostendorf-cloud/govue'
 // browser storage entries of govue (useTheme and the language layer), no
 // resource from another host, the page view counting of govue's analytics
 // package (internal/webapp, see AGENTS.md "Page view counting"), worded as
-// ostendorf.tech words it, whose operator statements (who runs Umami, how long
-// it keeps the data) are not made here, and the owner account: login, Argon2id hash,
+// ostendorf.tech words it, plus the operator's facts the code cannot show
+// (own hardware in Germany, 30 days of logs, 14 months of Umami data, the
+// legal bases), and the owner account: login, Argon2id hash,
 // TOTP secret and counter in owner_credentials (migration 0002,
 // internal/store/account.go), the deletion of unconfirmed registrations after
 // 24 hours at the next registration, the cookie __Host-session and its
@@ -42,8 +43,15 @@ const { locale } = useLanguage()
         Bei jedem Aufruf schreibt der Server eine Zeile in sein Protokoll. Sie enthält den
         Zeitpunkt, die HTTP-Methode, das Muster der angefragten Route (nicht die vollständige
         Adresse mit ihren Parametern), den Statuscode, die Größe und die Dauer der Antwort sowie die
-        IP-Adresse der Verbindung sowie eine zufällig erzeugte Kennung der Anfrage. Den User-Agent
-        Ihres Browsers protokolliert der Server nicht.
+        IP-Adresse des Besuchers (hinter einem vertrauenswürdigen Proxy aus dessen
+        Weiterleitungsangabe) sowie eine zufällig erzeugte Kennung der Anfrage. Den User-Agent Ihres
+        Browsers protokolliert der Server nicht.
+      </p>
+      <p>
+        Diese Protokolle (das Anwendungsprotokoll und das Protokoll des vorgeschalteten Ingress)
+        werden nach 30 Tagen gelöscht. Die Verarbeitung erfolgt auf Grundlage von Art. 6 Abs. 1 lit.
+        f DSGVO. Wir haben ein berechtigtes Interesse am sicheren und stabilen Betrieb dieser
+        Website.
       </p>
       <p>
         Für Anfragen an die Programmierschnittstelle unter /api begrenzt der Server die Anzahl der
@@ -57,13 +65,21 @@ const { locale } = useLanguage()
         nicht selbst. Der Server speichert dabei nichts.
       </p>
 
+      <h2 class="text-xl font-semibold">Hosting</h2>
+      <p>
+        Diese Website wird auf eigener Hardware in Deutschland betrieben, im Haus des Betreibers.
+        Einen Hosting-Anbieter setzen wir nicht ein, und für das Hosting gibt es keinen
+        Auftragsverarbeiter.
+      </p>
+
       <h2 id="umami" class="text-xl font-semibold">Besucherstatistik mit Umami</h2>
       <p>
-        Wenn die Besucherstatistik eingeschaltet ist, melden wir die Aufrufe von Seiten an die
-        Open-Source-Software Umami. Umami läuft nicht in Ihrem Browser: Es wird kein Skript geladen,
-        kein Cookie gesetzt und nichts auf Ihrem Endgerät gespeichert oder ausgelesen. Stattdessen
-        meldet unser Webserver jeden Aufruf einer Seite an Umami, mit den Angaben, die Ihr Browser
-        beim Aufruf ohnehin an uns übermittelt:
+        Wir zählen die Aufrufe von Seiten auf dem Server mit der Open-Source-Software Umami. Wir
+        betreiben Umami selbst auf eigener Hardware in Deutschland. Zweck ist die anonyme Messung
+        von Reichweite und Stabilität dieser Website. Umami läuft nicht in Ihrem Browser: Es wird
+        kein Skript in der Seite geladen, kein Cookie gesetzt und nichts auf Ihrem Endgerät
+        gespeichert oder ausgelesen. Stattdessen meldet unser Webserver jeden Aufruf einer Seite an
+        Umami, mit den Angaben, die Ihr Browser beim Aufruf ohnehin an uns übermittelt:
       </p>
       <ul class="list-disc pl-6">
         <li>
@@ -71,8 +87,8 @@ const { locale } = useLanguage()
           angehängte Parameter (ohne Seitentitel); Kennungen aus der Adresse werden nicht gemeldet
         </li>
         <li>
-          Herkunft der Referrer URL (Protokoll und Domain, ohne Pfad und Parameter), sofern Sie von
-          einer anderen Website kommen und Ihr Browser sie übermittelt
+          Herkunft der Referrer URL (Protokoll, Domain und gegebenenfalls Port, ohne Pfad und
+          Parameter), sofern Sie von einer anderen Website kommen und Ihr Browser sie übermittelt
         </li>
         <li>bevorzugte Sprache Ihres Browsers</li>
         <li>Browsertyp und Browserversion sowie verwendetes Betriebssystem (User-Agent)</li>
@@ -95,6 +111,13 @@ const { locale } = useLanguage()
         „Global Privacy Control“ (GPC) sendet, sowie Aufrufe, die Ihr Browser nur vorab lädt. Die
         Programmierschnittstelle unter /api und Dateien wie Skripte und Bilder werden nicht gezählt.
       </p>
+      <p>Die Statistikdaten werden nach 14 Monaten automatisch gelöscht.</p>
+      <p>
+        Die Verarbeitung erfolgt auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO. Wir haben ein
+        berechtigtes Interesse an der anonymen Messung von Reichweite und Stabilität unserer
+        Website. Sie können der Verarbeitung jederzeit widersprechen, indem Sie in Ihrem Browser „Do
+        Not Track“ oder „Global Privacy Control“ aktivieren, oder indem Sie uns kontaktieren.
+      </p>
 
       <h2 class="text-xl font-semibold">Speicher in Ihrem Browser</h2>
       <p>
@@ -111,6 +134,10 @@ const { locale } = useLanguage()
         nach Ihrer E-Mail-Adresse. Der Server prüft das Format nicht. Das Konto ist durch ein
         Passwort und durch einen Code aus einer Authenticator-App (TOTP) gesichert. Ohne Konto ist
         keine Anmeldung möglich.
+      </p>
+      <p>
+        Die Daten Ihres Kontos verarbeiten wir auf Grundlage von Art. 6 Abs. 1 lit. b DSGVO, zur
+        Erfüllung des Vertrags über das Konto, das Sie angefordert haben.
       </p>
       <p>
         Der Server speichert in der Datenbank: den Anmeldenamen so, wie Sie ihn eingeben, und ein
@@ -206,9 +233,14 @@ const { locale } = useLanguage()
       <p>
         On every request the server writes one line to its log. It holds the time, the HTTP method,
         the pattern of the requested route (not the full address with its parameters), the status
-        code, the size and the duration of the response, the IP address of the connection and a
-        randomly generated id of the request. The server does not log the user agent of your
-        browser.
+        code, the size and the duration of the response, the IP address of the visitor (behind a
+        trusted proxy, taken from the forwarding header of that proxy) and a randomly generated id
+        of the request. The server does not log the user agent of your browser.
+      </p>
+      <p>
+        These logs (the application log and the log of the ingress in front of it) are deleted after
+        30 days. The processing is based on Art. 6(1)(f) GDPR. We have a legitimate interest in the
+        secure and stable operation of this website.
       </p>
       <p>
         For requests to the programming interface under /api, the server limits the number of
@@ -222,13 +254,20 @@ const { locale } = useLanguage()
         nothing in doing so.
       </p>
 
+      <h2 class="text-xl font-semibold">Hosting</h2>
+      <p>
+        This website is operated on our own hardware in Germany, at the operator's home. We use no
+        hosting provider, and there is no processor for hosting.
+      </p>
+
       <h2 id="umami" class="text-xl font-semibold">Visitor statistics with Umami</h2>
       <p>
-        When visitor statistics are switched on, we report page views to the open-source software
-        Umami. Umami does not run in your browser: no script is loaded, no cookie is set, and
-        nothing is stored on or read from your device. Instead, our web server reports every page
-        request to Umami, using the information your browser transmits to us in any case when making
-        the request:
+        We count page views on the server with the open-source software Umami. We operate Umami
+        ourselves on our own hardware in Germany. The purpose is the anonymous measurement of the
+        reach and stability of this website. Umami does not run in your browser: no script is loaded
+        in the page, no cookie is set, and nothing is stored on or read from your device. Instead,
+        our web server reports every page request to Umami, using the information your browser
+        transmits to us in any case when making the request:
       </p>
       <ul class="list-disc pl-6">
         <li>
@@ -237,8 +276,8 @@ const { locale } = useLanguage()
           not reported
         </li>
         <li>
-          the origin of the referrer URL (protocol and domain, without path and parameters), where
-          you come from another website and your browser transmits it
+          the origin of the referrer URL (protocol, domain and, where present, port, without path
+          and parameters), where you come from another website and your browser transmits it
         </li>
         <li>your browser's preferred language</li>
         <li>browser type and version, and operating system used (user agent)</li>
@@ -261,6 +300,13 @@ const { locale } = useLanguage()
         signal are not recorded, nor are requests your browser merely preloads. The programming
         interface under /api and files such as scripts and images are not counted.
       </p>
+      <p>The statistics data is automatically deleted after 14 months.</p>
+      <p>
+        This processing is based on Art. 6(1)(f) GDPR. We have a legitimate interest in the
+        anonymous measurement of the reach and stability of our website. You can object to this
+        processing at any time by activating "Do Not Track" or "Global Privacy Control" in your
+        browser, or by contacting us.
+      </p>
 
       <h2 class="text-xl font-semibold">Storage in your browser</h2>
       <p>
@@ -276,6 +322,10 @@ const { locale } = useLanguage()
         Registration can be closed. As the login, the form asks for your email address. The server
         does not check the format. The account is secured by a password and by a code from an
         authenticator app (TOTP). Without an account, signing in is not possible.
+      </p>
+      <p>
+        We process the data of your account on the basis of Art. 6(1)(b) GDPR, to perform the
+        contract for the account you asked for.
       </p>
       <p>
         The server stores in the database: the login as you enter it and a second time in lower

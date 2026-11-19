@@ -332,6 +332,81 @@ func TestCountingMasksTheAddressAndTrustsOnlyTheConfiguredProxies(t *testing.T) 
 	}
 }
 
+// A visit that comes from the site itself reports no referrer, in any
+// spelling of the site host. A visit from another host reports its origin
+// only, so the control case proves the field is read at all.
+func TestCountingReportsNoReferrerForTheSiteItself(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		referer string
+		want    string
+	}{
+		{name: "same host", referer: "https://my-wishes.example.test/g/needle-one"},
+		{name: "www form", referer: "https://www.my-wishes.example.test/g/needle-one"},
+		{name: "with a port", referer: "https://my-wishes.example.test:8443/g/needle-one"},
+		{name: "other host", referer: "https://other.example.test/g/needle-one", want: "https://other.example.test/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakeUmami{}
+			h, views := countingHandler(t, fake, nil)
+			visit(t, h, http.MethodGet, "/", http.Header{"Referer": {tc.referer}})
+			closeViews(t, views)
+
+			posts := fake.bodies()
+			if len(posts) != 1 {
+				t.Fatalf("got %d views, want 1: %v", len(posts), posts)
+			}
+			if strings.Contains(posts[0], "needle-one") {
+				t.Errorf("post holds the referrer path: %s", posts[0])
+			}
+			got, present := payloadOf(t, posts[0])["referrer"]
+			if tc.want == "" {
+				if present {
+					t.Errorf("referrer = %v, want none", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("referrer = %v, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A private or loopback client address is never counted: it is a proxy, a
+// probe or a local tool, not a visitor.
+func TestCountingSkipsPrivateAndLoopbackClients(t *testing.T) {
+	t.Parallel()
+
+	for _, peer := range []string{"10.1.2.3:4000", "192.168.1.5:4000", "127.0.0.1:4000", "[::1]:4000"} {
+		t.Run(peer, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakeUmami{}
+			h, views := countingHandler(t, fake, nil)
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+			req.RemoteAddr = peer
+			req.Header.Set("User-Agent", visitorUA)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET / = %d, want 200", rec.Code)
+			}
+			closeViews(t, views)
+
+			if posts := fake.bodies(); len(posts) != 0 {
+				t.Errorf("got %d views from %s, want none: %v", len(posts), peer, posts)
+			}
+		})
+	}
+}
+
 // An unset pair is inert, and so is a handler built without views.
 func TestCountingOffCountsNothing(t *testing.T) {
 	t.Parallel()

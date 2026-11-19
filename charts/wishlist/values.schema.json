@@ -19,6 +19,7 @@
     },
     "config": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "siteUrl": { "type": "string", "pattern": "^(https?://[^/@?# ]+/?)?$" },
         "umami": {

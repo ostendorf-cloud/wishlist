@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -82,8 +83,8 @@ func run() error {
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), analyticsCloseTimeout)
 		defer cancel()
-		if err := views.Close(closeCtx); err != nil {
-			logger.Warn("page views still queued at shutdown were not all sent")
+		if err := closeResult(logger, views.Close(closeCtx)); err != nil {
+			logger.Warn("closing the page view client failed", "error", err)
 		}
 	}()
 
@@ -117,6 +118,17 @@ func run() error {
 // analyticsCloseTimeout bounds how long shutdown waits for queued page views
 // to reach Umami.
 const analyticsCloseTimeout = 5 * time.Second
+
+// closeResult turns a missed shutdown deadline into a warning: views that
+// did not reach Umami in time are lost, which is no failure. Other errors
+// pass through to the caller.
+func closeResult(logger *slog.Logger, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		logger.Warn("page views still queued at shutdown were not sent", "error", err)
+		return nil
+	}
+	return err
+}
 
 // handlerDeps is what the public handler is built from.
 type handlerDeps struct {

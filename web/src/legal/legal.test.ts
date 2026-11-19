@@ -65,7 +65,7 @@ describe('legal pages', () => {
     await renderApp(fakeApi(), path)
     const text = (await screen.findByRole('main')).textContent ?? ''
 
-    expect(text).not.toMatch(/analytics|Reichweite|guest|Gäste/i)
+    expect(text).not.toMatch(/analytics|guest|Gäste/i)
     expect(text).toMatch(/info@my-wishes\.de/)
     expect(text).toMatch(/IP/)
   })
@@ -138,6 +138,45 @@ describe('legal pages', () => {
       expect(text).toMatch(fragment)
     }
     expect(text).toMatch(/Global Privacy Control/)
+  })
+
+  it.each([
+    [
+      '/de/privacy',
+      [
+        /eigener Hardware in Deutschland/,
+        /nach 30 Tagen gelöscht/,
+        /nach 14 Monaten/,
+        /Art\. 6 Abs\. 1 lit\. f DSGVO/,
+        /Art\. 6 Abs\. 1 lit\. b DSGVO/,
+        /Protokoll, Domain und gegebenenfalls Port/,
+        /aus dessen\s+Weiterleitungsangabe/,
+      ],
+      [/Wenn die Besucherstatistik eingeschaltet ist/, /Hetzner/, /Protokoll und Domain/],
+    ],
+    [
+      '/en/privacy',
+      [
+        /own hardware in Germany/,
+        /deleted\s+after 30 days/,
+        /after 14 months/,
+        /Art\. 6\(1\)\(f\) GDPR/,
+        /Art\. 6\(1\)\(b\) GDPR/,
+        /protocol, domain and, where present, port/,
+        /forwarding header/,
+      ],
+      [/When visitor statistics are switched on/, /Hetzner/, /protocol and domain/],
+    ],
+  ] as const)('states the operator facts and drops the hedging on %s', async (path, yes, no) => {
+    await renderApp(fakeApi(), path)
+    const text = ((await screen.findByRole('main')).textContent ?? '').replace(/\s+/g, ' ')
+
+    for (const fragment of yes) {
+      expect(text).toMatch(fragment)
+    }
+    for (const fragment of no) {
+      expect(text).not.toMatch(fragment)
+    }
   })
 
   it.each(paths)('has a back link to the start page that exists, on %s', async (path) => {

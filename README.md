@@ -69,8 +69,10 @@ the start.
 - Not counted: a visitor who sends Do Not Track or Global Privacy Control, prefetch, the API,
   assets, health and metrics routes, and anything that is not a successful HTML page.
 - A guest's reservation and share routes are never reported by id or token: only the pattern is.
-- Who runs the Umami instance, how long it keeps the data and the legal basis are the operator's
-  statements, not this repository's.
+- The privacy text states the operator's facts, which the code cannot show: Umami and the site
+  run on the owner's own hardware in Germany, access logs are kept 30 days, Umami data 14
+  months, the legal basis is Art. 6(1)(f) GDPR (accounts: Art. 6(1)(b)). Change them in
+  `PrivacyPage.vue` and `legal.test.ts` together.
 - The text lives in `web/src/legal/PrivacyPage.vue`, in German and English.
 
 ## Container
