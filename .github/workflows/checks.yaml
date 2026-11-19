@@ -204,7 +204,7 @@ jobs:
     # sets pinDigests, so its first pull request adds the "@sha256:" digest.
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:526f86d93c6ea08fd3f1fe5605650cacc781b2c6013169a0ad8f42c7d3d84f32
         env:
           POSTGRES_USER: wishlist
           POSTGRES_PASSWORD: ci-dummy-password-not-real
