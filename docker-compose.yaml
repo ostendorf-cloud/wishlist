@@ -35,7 +35,7 @@ services:
   #   export WISHLIST_TEST_DATABASE_URL='postgres://wishlist:dev-password-not-real@127.0.0.1:5432/postgres?sslmode=disable'
   postgres:
     # Tag only: Renovate pins the manifest list digest, see renovate.json.
-    image: postgres:17-alpine
+    image: postgres:18-alpine@sha256:ff64c9e3bdf8e2120107d3559de8db314e8305f7e38c5105903c6295876738ff
     restart: unless-stopped
     environment:
       POSTGRES_USER: "wishlist"
