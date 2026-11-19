@@ -31,7 +31,7 @@ type Config struct {
 	LogLevel  slog.Level
 	// Database is the PostgreSQL connection.
 	Database Database
-	// RegistrationOpen lets anybody create an owner account. On by default.
+	// RegistrationOpen lets anybody create an owner account. Off by default.
 	RegistrationOpen bool
 	// AllowPlainHTTP drops the Secure attribute and the __Host- prefix of the
 	// session cookie, for development over http. Refused unless the listener
@@ -160,7 +160,7 @@ func Load(getenv func(string) string) (Config, error) {
 		problems = append(problems, fmt.Errorf("envconf: DB_SSLMODE: must be one of %v, got %q", sslModes, cfg.Database.SSLMode))
 	}
 
-	cfg.RegistrationOpen = l.Bool("REGISTRATION_OPEN", true)
+	cfg.RegistrationOpen = l.Bool("REGISTRATION_OPEN", false)
 
 	proxies, err := clientip.ParseCIDRs(l.String("TRUSTED_PROXIES", ""))
 	if err != nil {

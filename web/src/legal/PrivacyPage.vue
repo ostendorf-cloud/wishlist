@@ -104,13 +104,32 @@ const { locale } = useLanguage()
         mehrfach: je Adresse (5 pro Minute), je Anmeldename und Adresse (10 in 15 Minuten) und je
         Anmeldename allein (100 pro Stunde). Er hält dafür die Adressen der Verbindungen und die
         Anmeldenamen, diese nur als SHA-256-Wert, bis zu 100000 Einträge je Zähler, nur im
-        Arbeitsspeicher. Ein Eintrag wird gelöscht, sobald sein Zähler wieder voll aufgefüllt ist
-        und der Server aufräumt, was mindestens einmal pro Minute geschieht. Das dauert also
-        höchstens etwa eine Minute, 15 Minuten oder eine Stunde, je nach Zähler.
+        Arbeitsspeicher. Ein Eintrag wird bei der nächsten Anfrage entfernt, nachdem sein Zähler
+        wieder voll aufgefüllt ist (nach etwa einer Minute, 15 Minuten oder einer Stunde, je nach
+        Zähler), oder bei einem Neustart des Servers. Der Server räumt nicht von sich aus auf,
+        sondern nur, wenn eine Anfrage eintrifft.
       </p>
       <p>
         Wer kein Konto hat, gibt auf dieser Website keine Inhalte ein, und es werden keine von ihm
         gespeichert.
+      </p>
+
+      <h2 class="text-xl font-semibold">Inhalte Ihres Kontos</h2>
+      <p>
+        Mit einem Konto können Sie Listen und Wünsche anlegen. Der Server speichert sie in der
+        Datenbank, bis Sie sie löschen. Zu einer Liste gehören: Titel, Anlass, Datum des
+        Ereignisses, Begrüßungstext, die Markierung, ob sie archiviert ist, sowie der Zeitpunkt der
+        Anlage und der letzten Änderung. Zu einem Wunsch gehören: Titel, Beschreibung,
+        Internetadresse, Geschäft, Preis mit Währung, Priorität, Anzahl, die Markierung, ob es ein
+        gemeinsames Geschenk ist, die Reihenfolge in der Liste, die Markierung, ob er archiviert
+        ist, sowie der Zeitpunkt der Anlage und der letzten Änderung. Diese Angaben machen Sie
+        selbst.
+      </p>
+      <p>
+        Die Zeile Ihres Kontos in der Datenbank enthält außerdem einen Benutzernamen der Form
+        owner-Nummer, der ohne Ihre Anmeldedaten vergeben wird, und den Zeitpunkt der letzten
+        Nutzung. Die Sitzung im Arbeitsspeicher enthält zusätzlich den Zeitpunkt ihrer Ausstellung,
+        der letzten Nutzung und ihres Ablaufs.
       </p>
 
       <h2 class="text-xl font-semibold">Ihre Rechte</h2>
@@ -208,12 +227,27 @@ const { locale } = useLanguage()
         per address (5 per minute), per login and address (10 per 15 minutes) and per login alone
         (100 per hour). For that it keeps the addresses of the connections and the logins, the
         latter only as a SHA-256 value, up to 100000 entries per counter, in memory only. An entry
-        is deleted once its counter has refilled completely and the server tidies up, which happens
-        at least once per minute. That takes about one minute, 15 minutes or one hour at most,
-        depending on the counter.
+        is removed at the next request after its counter has refilled completely (after about one
+        minute, 15 minutes or one hour, depending on the counter), or at a restart of the server.
+        The server does not tidy up on its own, only when a request arrives.
       </p>
       <p>
         Anyone without an account enters no content on this website, and none is stored from them.
+      </p>
+
+      <h2 class="text-xl font-semibold">Content of your account</h2>
+      <p>
+        With an account you can create lists and wishes. The server stores them in the database
+        until you delete them. A list holds: title, occasion, date of the event, greeting, the flag
+        whether it is archived, and the time of creation and of the last change. A wish holds:
+        title, description, web address, shop, price with currency, priority, quantity, the flag
+        whether it is a group gift, the order in the list, the flag whether it is archived, and the
+        time of creation and of the last change. You enter these details yourself.
+      </p>
+      <p>
+        The row of your account in the database also holds a username of the form owner-number,
+        which is assigned without your sign in details, and the time of the last use. The session in
+        memory also holds the time it was issued, the time of last use and the time it expires.
       </p>
 
       <h2 class="text-xl font-semibold">Your rights</h2>

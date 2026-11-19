@@ -349,40 +349,91 @@ func TestEveryRegisteredPatternComesFromTheRouteTable(t *testing.T) {
 // library and govue's language package by its own boundary_test.go.
 // middleware.Chain is govue's wrapper around the finished mux, the outer
 // chain: it takes the mux as a handler and registers nothing.
-// Mount is cfg.Auth.Mount: the account routes of internal/auth, which holds no
-// store and answers account JSON only (the selector hides the receiver name).
-var allowedMuxHelpers = []string{"ownerAPI.Register", "legal.Register", "middleware.Chain", "Mount"}
+// cfg.Auth.Mount is the account routes of internal/auth, which holds no store
+// and answers account JSON only. It is matched by its full selector chain, so
+// no other x.y.Mount(mux, ...) passes.
+var allowedMuxHelpers = []string{"ownerAPI.Register", "legal.Register", "middleware.Chain", "cfg.Auth.Mount"}
+
+// selectorChain spells a chain of identifiers and selectors as "a.b.c". Any
+// other shape (a call or an index in the chain) gives "".
+func selectorChain(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.SelectorExpr:
+		if inner := selectorChain(x.X); inner != "" {
+			return inner + "." + x.Sel.Name
+		}
+	}
+	return ""
+}
+
+// muxHelperCalls names every call in file that gets the identifier mux as an
+// argument, except the methods of the mux itself. A callee that is not a plain
+// selector chain is named "?.<method>" and so never matches the allow list.
+func muxHelperCalls(file *ast.File) []string {
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := sel.X.(*ast.Ident); ok && id.Name == "mux" {
+			return true // a method of the mux itself, counted by the test above
+		}
+		for _, arg := range call.Args {
+			if id, ok := arg.(*ast.Ident); ok && id.Name == "mux" {
+				name := selectorChain(sel)
+				if name == "" {
+					name = "?." + sel.Sel.Name
+				}
+				out = append(out, name)
+			}
+		}
+		return true
+	})
+	return out
+}
+
+func TestTheMuxHelperScanMatchesTheFullSelectorChain(t *testing.T) {
+	src := `package x
+func f() {
+	cfg.Auth.Mount(mux, a, b)
+	other.Auth.Mount(mux, a, b)
+	x.y.Mount(mux, a, b)
+	Mount.Mount(mux)
+	g().Mount(mux)
+	mux.Handle("/", h)
+}`
+	file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := muxHelperCalls(file)
+	want := []string{"cfg.Auth.Mount", "other.Auth.Mount", "x.y.Mount", "Mount.Mount", "?.Mount"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("muxHelperCalls = %v, want %v", got, want)
+	}
+	for _, name := range got {
+		if slices.Contains(allowedMuxHelpers, name) != (name == "cfg.Auth.Mount") {
+			t.Errorf("%s: allow list verdict is wrong", name)
+		}
+	}
+}
 
 func TestOnlyKnownHelpersGetThePublicMux(t *testing.T) {
 	found := map[string]bool{}
 	for path, file := range webappFiles(t) {
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
+		for _, name := range muxHelperCalls(file) {
+			if !slices.Contains(allowedMuxHelpers, name) {
+				t.Errorf("%s: %s gets the public mux and is not in allowedMuxHelpers", path, name)
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			recv, _ := sel.X.(*ast.Ident)
-			if recv != nil && recv.Name == "mux" {
-				return true // a method of the mux itself, counted by the test above
-			}
-			for _, arg := range call.Args {
-				if id, ok := arg.(*ast.Ident); ok && id.Name == "mux" {
-					name := sel.Sel.Name
-					if recv != nil {
-						name = recv.Name + "." + name
-					}
-					if !slices.Contains(allowedMuxHelpers, name) {
-						t.Errorf("%s: %s gets the public mux and is not in allowedMuxHelpers", path, name)
-					}
-					found[name] = true
-				}
-			}
-			return true
-		})
+			found[name] = true
+		}
 	}
 	for _, name := range allowedMuxHelpers {
 		if !found[name] {

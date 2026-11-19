@@ -81,15 +81,34 @@ func (s *AccountStore) CreateAccount(ctx context.Context, login, loginKey, passw
 		// secret was never confirmed, it is older than 24 hours and no list
 		// points at it. The credentials go with it (on delete cascade). Lists
 		// are the only other table that references owners.
-		if _, err := tx.Exec(ctx, `
-			delete from owners o
-			where o.subject like 'local:%'
+		//
+		// Two statements, not one delete with an exists subquery: on READ
+		// COMMITTED that subquery could still see the old totp_counter of a
+		// confirm that commits meanwhile, and delete a fresh owner. A select
+		// for update waits for that confirm and re-checks totp_counter = 0 on
+		// the newest row version. The ids are ordered so that two cleanups lock
+		// in the same order and cannot deadlock.
+		rows, err := tx.Query(ctx, `
+			select c.owner_id
+			from owner_credentials c
+			join owners o on o.id = c.owner_id
+			where c.totp_counter = 0
+			  and o.subject like 'local:%'
 			  and o.created_at < now() - interval '24 hours'
-			  and exists (select 1 from owner_credentials c
-			              where c.owner_id = o.id and c.totp_counter = 0)
-			  and not exists (select 1 from lists l where l.owner_id = o.id)`,
-		); err != nil {
-			return fmt.Errorf("delete unconfirmed owners: %w", err)
+			  and not exists (select 1 from lists l where l.owner_id = o.id)
+			order by c.owner_id
+			for update of c`)
+		if err != nil {
+			return fmt.Errorf("select unconfirmed owners: %w", err)
+		}
+		stale, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+		if err != nil {
+			return fmt.Errorf("select unconfirmed owners: %w", err)
+		}
+		if len(stale) > 0 {
+			if _, err := tx.Exec(ctx, `delete from owners where id = any($1)`, stale); err != nil {
+				return fmt.Errorf("delete unconfirmed owners: %w", err)
+			}
 		}
 		var id int64
 		if err := tx.QueryRow(ctx, `

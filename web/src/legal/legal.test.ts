@@ -86,6 +86,38 @@ describe('legal pages', () => {
     },
   )
 
+  it.each([
+    ['/de/privacy', /bei der nächsten Anfrage entfernt/, /mindestens einmal pro Minute/],
+    ['/en/privacy', /removed at the next request/, /at least once per minute/],
+  ])('says the limiter tidies up on a request only, on %s', async (path, yes, no) => {
+    await renderApp(fakeApi(), path)
+    const text = (await screen.findByRole('main')).textContent ?? ''
+
+    expect(text).toMatch(yes)
+    expect(text).not.toMatch(no)
+  })
+
+  it.each([
+    ['/de/privacy', ['Inhalte Ihres Kontos', 'Anlass', 'Gruppengeschenk|gemeinsames Geschenk']],
+    ['/en/privacy', ['Content of your account', 'occasion', 'group gift']],
+  ])('lists what an account stores on %s', async (path, [heading, occasion, group]) => {
+    await renderApp(fakeApi(), path)
+    const main = within(await screen.findByRole('main'))
+    const text = main.getByRole('heading', { name: heading }).parentElement?.textContent ?? ''
+
+    expect(text).toMatch(new RegExp(occasion))
+    expect(text).toMatch(new RegExp(group))
+    expect(text).toMatch(/owner-/)
+    for (const word of [
+      'Priorität|priority',
+      'Preis|price',
+      'Geschäft|shop',
+      'Internetadresse|web address',
+    ]) {
+      expect(text).toMatch(new RegExp(word))
+    }
+  })
+
   it.each(paths)('has a back link to the start page that exists, on %s', async (path) => {
     await renderApp(fakeApi(), path)
     const main = within(await screen.findByRole('main'))

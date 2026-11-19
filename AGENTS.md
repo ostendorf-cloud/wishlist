@@ -161,14 +161,17 @@ serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on 
 - `internal/legal` is the one writer outside the adapter on the public mux (the legal
   redirects and the four prerendered pages, no data). `TestOnlyKnownHelpersGetThePublicMux`
   allows exactly `ownerAPI.Register`, `legal.Register`, `middleware.Chain` and the account
-  routes' `Mount` (`internal/auth`) to receive the mux in `internal/webapp`, and
-  `internal/legal/boundary_test.go` limits that package to the standard library and
-  `govue/language`, so it can never reach the store. A third helper or an import of this
-  module there fails a test.
+  routes' `cfg.Auth.Mount` (`internal/auth`, matched by the full selector chain) to receive
+  the mux in `internal/webapp`, and `internal/legal/boundary_test.go` limits that package to
+  the standard library and `govue/language`, so it can never reach the store. A third helper
+  or an import of this module there fails a test.
 - `TestNothingUnderWebappReachesTheGuestSide` is the handler layer rule of the store boundary:
   code under `internal/webapp` may name only `OwnerStore`, `ErrNotFound`, `List`, `Wish`,
   `ListInput` and `WishInput` of the store, and never `Guests`, `Owners`, `Core` or
-  `GuestStore`. It reads names, so it does not catch reflection or generated code.
+  `GuestStore`. `TestTheAccountPackagesReachOnlyTheAccountSide` holds `internal/auth` and
+  `internal/accounts` to `Account`, `AccountStore`, `ErrNotFound` and `ErrLoginTaken`, with the
+  same forbidden names. Fixtures prove each rule. They read names, so they do not catch
+  reflection or generated code.
 
 ### Who the owner is
 
@@ -205,9 +208,11 @@ the same owners row.
   must never see the login.
 - Unconfirmed accounts: every signup first deletes the owners from a local registration (subject
   `local:%`) whose TOTP counter is still 0, that are older than 24 hours and that have no list
-  (`lists` is the only table besides `owner_credentials` that references `owners`). One SQL
-  statement in `AccountStore.CreateAccount`, in the same transaction as the insert, so a login
-  that was never confirmed is free again after 24 hours. Tested with the fake backend
+  (`lists` is the only table besides `owner_credentials` that references `owners`). Two
+  statements in `AccountStore.CreateAccount`, in the same transaction as the insert: a `select
+  ... for update of c` of the candidates, ordered by id, then a delete by id. A single delete
+  with a subquery could race a concurrent confirm on READ COMMITTED. A login that was never
+  confirmed is free again after 24 hours. Tested with the fake backend
   (`TestASignupDeletesStaleUnconfirmedAccountsOnly` in `cmd/wishlist`) and on PostgreSQL
   (`internal/store/account_db_test.go`).
 - The TOTP secret is stored in the clear in `owner_credentials.totp_secret`. govue allows
@@ -226,16 +231,20 @@ the same owners row.
   stricter limit of `auth` (per address, 5 per minute) after the general one, and signup, login
   and confirm also take a token from a bucket per login and client address (10 per 15 minutes,
   login case folded, shared by the three), then from a ceiling per login alone (100 per hour).
-  One address cannot lock the owner out of another address. A refused guess costs no password
-  derivation. A body without a login gets no per login bucket: govue runs one Argon2id
-  derivation for it, and only the client limit covers that.
+  One address cannot lock the owner out of another address. A distributed attacker can still
+  hold the lockout: with enough addresses the ceiling stays used up and the owner cannot sign
+  in. The owner accepts that trade-off. A bypass for known devices belongs into govue, not
+  here. A refused guess costs no password derivation. A body without a login gets no per
+  login bucket: govue runs one Argon2id derivation for it, and only the client limit covers
+  that.
 - `webapp.Config.CSRFExpected` is the session's token (`csrf.Token(key, session.ID)`). Every
   unsafe request of a signed in session needs it. A request without a session needs none, and
   the protector's origin check still applies. The CSRF key is random per process, which is
   enough because the sessions are in this process only.
-- `REGISTRATION_OPEN` (binary default true) closes signup: the route stays, answers 403 `signup
-  is not available`, and creates nothing. The chart default is `auth.registrationOpen: false`;
-  docker-compose and `.env.example` keep it open for local development.
+- `REGISTRATION_OPEN` (binary default false, closed everywhere by default) opens signup when
+  true. While closed the route stays, answers 403 `signup is not available`, and creates
+  nothing. The chart default is `auth.registrationOpen: false`; only docker-compose sets it
+  true, for local development.
 - Session store: govue's `session.MemoryStore`, in the memory of the process. A restart signs
   everybody out. A second replica would not know the first one's sessions, so the chart fails
   the render for `replicaCount` above 1: `values.schema.json` (`maximum: 1`) first, and a guard

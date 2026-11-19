@@ -82,6 +82,18 @@ func TestASignupDeletesStaleUnconfirmedAccountsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An imported owner that also has a credentials row with counter 0: only
+	// the local subject makes an account deletable.
+	importedWithCreds, err := c.Owners().UpsertOwner(ctx, "oidc-subject-2", "oidc2", "Oidc Two", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.pool.Exec(ctx, `
+		insert into owner_credentials (owner_id, login, login_key, password_hash, totp_secret, totp_counter)
+		values ($1, 'imported@example.invalid', 'imported@example.invalid', 'hash', 'SECRET', 0)`,
+		importedWithCreds.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := acc.ConfirmTOTP(ctx, confirmed.ID, "SECRET", 5); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +105,10 @@ func TestASignupDeletesStaleUnconfirmedAccountsOnly(t *testing.T) {
 	age(confirmed, 500)
 	age(withData, 500)
 	if _, err := c.pool.Exec(ctx, `update owners set created_at = now() - interval '500 hours' where id = $1`, imported.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.pool.Exec(ctx, `update owners set created_at = now() - interval '500 hours' where id = $1`, importedWithCreds.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -112,6 +128,12 @@ func TestASignupDeletesStaleUnconfirmedAccountsOnly(t *testing.T) {
 	}
 	if err := c.pool.QueryRow(ctx, `select count(*) from owners where id = $1`, imported.ID).Scan(&n); err != nil || n != 1 {
 		t.Errorf("an owner without local credentials was deleted: %d, %v", n, err)
+	}
+	if err := c.pool.QueryRow(ctx, `select count(*) from owners where id = $1`, importedWithCreds.ID).Scan(&n); err != nil || n != 1 {
+		t.Errorf("an old unconfirmed owner with a non local subject was deleted: %d, %v", n, err)
+	}
+	if _, err := acc.FindAccount(ctx, "imported@example.invalid"); err != nil {
+		t.Errorf("the credentials of the non local owner are gone: %v", err)
 	}
 	// The login of the deleted account can register again.
 	if _, err := acc.CreateAccount(ctx, "stale@example.invalid", "stale@example.invalid", "hash", "SECRET"); err != nil {

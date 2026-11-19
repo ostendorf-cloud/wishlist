@@ -328,8 +328,9 @@ func (a *Auth) whoami(w http.ResponseWriter, r *http.Request) error {
 // and the client address: one address spends only its own budget and cannot
 // lock the owner out of another. The ceiling is keyed on the login alone and is
 // far above what an owner types, so guesses from many addresses stay bounded.
-// The cost of the ceiling is that a determined crowd can still make the owner
-// wait until it refills.
+// The cost of the ceiling: a distributed attacker can hold the lockout, since
+// enough addresses keep it used up and the owner cannot sign in. The owner
+// accepts that. A known device bypass belongs into govue.
 func (a *Auth) limitByLogin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body == nil {

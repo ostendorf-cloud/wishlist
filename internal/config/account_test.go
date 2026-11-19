@@ -8,14 +8,14 @@ import (
 	"testing"
 )
 
-func TestRegistrationIsOpenByDefaultAndClosedBySetting(t *testing.T) {
+func TestRegistrationIsClosedByDefaultAndOpenedBySetting(t *testing.T) {
 	cfg, err := Load(env(validEnv()))
-	if err != nil || !cfg.RegistrationOpen {
-		t.Fatalf("default: RegistrationOpen = %v, err %v, want open", cfg.RegistrationOpen, err)
-	}
-	cfg, err = Load(env(with(validEnv(), map[string]string{"REGISTRATION_OPEN": "false"})))
 	if err != nil || cfg.RegistrationOpen {
-		t.Fatalf("REGISTRATION_OPEN=false: RegistrationOpen = %v, err %v, want closed", cfg.RegistrationOpen, err)
+		t.Fatalf("default: RegistrationOpen = %v, err %v, want closed", cfg.RegistrationOpen, err)
+	}
+	cfg, err = Load(env(with(validEnv(), map[string]string{"REGISTRATION_OPEN": "true"})))
+	if err != nil || !cfg.RegistrationOpen {
+		t.Fatalf("REGISTRATION_OPEN=true: RegistrationOpen = %v, err %v, want open", cfg.RegistrationOpen, err)
 	}
 	if _, err = Load(env(with(validEnv(), map[string]string{"REGISTRATION_OPEN": "maybe"}))); err == nil {
 		t.Error("REGISTRATION_OPEN=maybe was accepted")

@@ -118,7 +118,7 @@ See `values.yaml` for the full, commented list. The ones most deployments touch:
 | `image.repository` | Container image | `ghcr.io/ostendorf-cloud/wishlist` |
 | `image.tag` | Image tag | `.Chart.AppVersion` |
 | `replicaCount` | Pod replicas. At most `1`: sessions live in the memory of the process, a higher value fails the render. Scaling out needs a shared session store in the service first. | `1` |
-| `auth.registrationOpen` | Anybody can create an owner account. `true` opens registration (`REGISTRATION_OPEN`). Closed by default, unlike docker-compose and `.env.example`, which keep it open for local development. Accounts whose TOTP secret is not confirmed are deleted at the next signup after 24 hours | `false` |
+| `auth.registrationOpen` | Anybody can create an owner account. `true` opens registration (`REGISTRATION_OPEN`). Closed by default, like the binary. Only docker-compose sets it open, for local development. Accounts whose TOTP secret is not confirmed are deleted at the next signup after 24 hours | `false` |
 | `auth.trustedProxies` | Proxy addresses or CIDR ranges whose `X-Forwarded-For` is believed (`TRUSTED_PROXIES`). Required when `ingress.enabled` or `httpRoute.enabled` is true: the render fails with it empty | `[]` |
 | `service.port` | Public Service and container port, the only one the `Ingress`/`HTTPRoute` ever route to | `8080` |
 | `service.adminPort` | govue's admin listener: health, readiness and metrics, in-cluster only | `8081` |
