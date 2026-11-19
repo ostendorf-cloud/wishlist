@@ -14,6 +14,9 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  // The prerender bundle (src/prerender.ts) runs in plain Node, which cannot
+  // load govue's TypeScript sources, so vite compiles the package into it.
+  ssr: { noExternal: ['@ostendorf-cloud/govue'] },
   build: {
     outDir: '../cmd/wishlist/dist',
     emptyOutDir: true,

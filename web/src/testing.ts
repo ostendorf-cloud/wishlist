@@ -4,12 +4,13 @@
 // Helpers for tests only. Nothing in the app imports this file.
 
 import { render } from '@testing-library/vue'
-import { ApiError, ErrorCode } from '@ostendorf-cloud/govue'
+import { ApiError, createGovueI18n, ErrorCode } from '@ostendorf-cloud/govue'
 import { vi } from 'vitest'
 
 import { ownerApiKey, type OwnerApi } from './api/owner'
 import type { List, Wish } from './api/types'
 import App from './App.vue'
+import { localeOfPath } from './legal/site'
 import { createTestRouter } from './router'
 
 export function aList(overrides: Partial<List> = {}): List {
@@ -92,7 +93,15 @@ export const notFound = (): ApiError => apiError(ErrorCode.notFound, 404)
 export async function renderApp(api: OwnerApi, route = '/') {
   const router = createTestRouter()
   await router.push(route)
-  const result = render(App, { global: { plugins: [router], provide: { [ownerApiKey]: api } } })
+  // The language layer as main.ts installs it, without a stored choice: a legal
+  // path names its language, any other page is English here.
+  const language = createGovueI18n({
+    locale: localeOfPath(route) ?? 'en',
+    storage: { kind: 'none' },
+  })
+  const result = render(App, {
+    global: { plugins: [router, language], provide: { [ownerApiKey]: api } },
+  })
   await router.isReady()
   return { router, ...result }
 }

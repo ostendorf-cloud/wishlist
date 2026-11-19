@@ -10,6 +10,7 @@ import {
   type RouterHistory,
 } from 'vue-router'
 
+import { legalRouteRecords } from './legal/site'
 import DashboardView from './views/DashboardView.vue'
 import ListFormView from './views/ListFormView.vue'
 import ListView from './views/ListView.vue'
@@ -27,6 +28,11 @@ export const routes: RouteRecordRaw[] = [
     props: true,
   },
   { path: '/wishes/:id(\\d+)/edit', name: 'wish-edit', component: WishFormView, props: true },
+  // /de/imprint, /en/imprint, /de/privacy and /en/privacy. The server serves them
+  // as prerendered files, and the bundle that loads on one has to show it too.
+  // The paths come from govue, so they are not literals here: internal/webapp
+  // matches them with exact patterns, not through spaRoutes.
+  ...legalRouteRecords,
   // Anything else is the dashboard: a bad address never leaves a blank page.
   { path: '/:rest(.*)*', redirect: { name: 'dashboard' } },
 ]

@@ -205,6 +205,28 @@ objects are not deleted: image milestone), share tokens, guest access, translati
 import. Security headers (CSP) are not set by this handler yet; they need a check against the
 built bundle in a browser.
 
+## Legal pages
+
+The site has its own imprint and privacy page in German and English, built on govue's legal
+structure. govue ships no text: the texts are `web/src/legal/ImprintPage.vue` and
+`PrivacyPage.vue`, and they may state only what the code does today. A change that adds a
+cookie, a stored field, a log field, an analytics call, guests or a sign in changes the privacy
+text in the same pull request. The site has no terms, so `/terms` and `/agb` do not exist.
+
+- `internal/legal` mounts `language.HandleLegal` (the redirects `/imprint`, `/privacy`,
+  `/impressum`, `/datenschutz`, `/datenschutzerklaerung`) and serves the four canonical pages
+  `/de/imprint`, `/en/imprint`, `/de/privacy`, `/en/privacy` as exact patterns from the built
+  `dist/<code>/<page>/index.html`. It sits outside `internal/webapp` because the handler layer
+  tests allow no other writer of a response body there. `webapp.go` mounts it outside the
+  route chain, so these paths need no entry in `spaRoutes`.
+- `pnpm run build` is `vite build`, then `prerender` (`src/prerender.ts` through
+  `govue-prerender`, which writes the four pages and `sitemap.xml` into `cmd/wishlist/dist`),
+  then `check:legal` (`govue-check-legal`). The check fails the build when a prerendered page
+  lacks the exact footer links of its language. The origin of the sitemap is `ORIGIN` in
+  `web/src/legal/site.ts`.
+- The router holds the four legal paths from govue's `legalRoutes`, so the bundle that loads
+  on a legal page shows it instead of redirecting to the dashboard.
+
 ## Store tests
 
 The tests against a real PostgreSQL (`internal/store/db_test.go`,

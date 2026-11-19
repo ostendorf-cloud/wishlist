@@ -25,6 +25,8 @@ cmd/wishlist/dist/
 # Node, for the web/ package
 node_modules/
 dist/
+# The SSR bundle of the legal page prerender, removed again by the same script.
+web/.prerender-ssr/
 coverage/
 *.log
 *.tsbuildinfo
