@@ -29,6 +29,9 @@ services:
       WISHLIST_ALLOW_PLAIN_HTTP_ANY_LISTENER: "true"
       # Open for local development. The binary and the Helm chart close it by default.
       REGISTRATION_OPEN: "true"
+      # Counting is off unless both UMAMI_ values are set, in .env.
+      UMAMI_URL: "${UMAMI_URL:-}"
+      UMAMI_WEBSITE_ID: "${UMAMI_WEBSITE_ID:-}"
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:8081:8081"

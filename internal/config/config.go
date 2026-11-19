@@ -12,9 +12,12 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"net/url"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/analytics"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/envconf"
 	"github.com/ostendorf-cloud/govue/logging"
@@ -40,6 +43,41 @@ type Config struct {
 	// TrustedProxies are the peers whose X-Forwarded-For is believed. Empty
 	// trusts nothing: every limit then keys by the connection address.
 	TrustedProxies []netip.Prefix
+	// SiteURL is the public origin of the site. Its host is what the page
+	// view counting reports as the hostname of every view.
+	SiteURL string
+	// Umami is govue's page view counting. It is off unless UMAMI_URL and
+	// UMAMI_WEBSITE_ID are both set; one of the two alone is an error.
+	Umami analytics.Config
+}
+
+// defaultSiteURL is the public origin when SITE_URL is not set.
+const defaultSiteURL = "https://my-wishes.de"
+
+// SiteHostname is the bare host of SiteURL, without scheme, port or path. It
+// is empty when SiteURL is not a valid origin, which Load refuses.
+func (c Config) SiteHostname() string {
+	u, err := url.Parse(c.SiteURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// checkSiteURL refuses anything but an origin: an http or https URL with a
+// host, no credentials, no query, no fragment and no path. The error never
+// repeats the value.
+func checkSiteURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errors.New("envconf: SITE_URL: must be a URL such as https://my-wishes.de")
+	}
+	if (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" ||
+		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		(u.Path != "" && u.Path != "/") {
+		return errors.New("envconf: SITE_URL: must be an http or https origin without credentials, path, query or fragment")
+	}
+	return nil
 }
 
 // loopbackListener says whether addr binds the loopback interface only. An
@@ -167,6 +205,20 @@ func Load(getenv func(string) string) (Config, error) {
 		problems = append(problems, fmt.Errorf("envconf: TRUSTED_PROXIES: %w", err))
 	}
 	cfg.TrustedProxies = proxies
+
+	cfg.SiteURL = strings.TrimRight(l.String("SITE_URL", defaultSiteURL), "/")
+	if err := checkSiteURL(cfg.SiteURL); err != nil {
+		problems = append(problems, err)
+	}
+
+	// Page view counting is off unless both UMAMI_URL and UMAMI_WEBSITE_ID
+	// are set. LoadConfig returns every problem of the pair at once and never
+	// repeats the URL.
+	umami, err := analytics.LoadConfig(getenv)
+	if err != nil {
+		problems = append(problems, err)
+	}
+	cfg.Umami = umami
 
 	// A session cookie over plain http travels in the clear, so it is opt in
 	// twice. The first variable turns it on. It is then honoured only when the

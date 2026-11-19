@@ -45,11 +45,35 @@ The binary reads its configuration from the environment; see the Configuration t
 | `DB_SSLMODE` | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full` | `require` |
 | `DB_MAX_CONNS` | Pool size per pod, 1 to 100 | `10` |
 | `DB_CONNECT_TIMEOUT` | One attempt to open a connection, 1s to 1m | `5s` |
+| `SITE_URL` | Public origin of the site; its bare host is sent to Umami as the hostname | `https://my-wishes.de` |
+| `TRUSTED_PROXIES` | Comma separated addresses or CIDRs of the proxies in front of the service, whose `X-Forwarded-For` is believed. Behind a proxy without it no view is counted | unset |
+| `UMAMI_URL` | Base URL of a Umami instance; page views are reported to it from the server | unset |
+| `UMAMI_WEBSITE_ID` | Umami website id (a UUID) | unset |
+| `UMAMI_TIMEOUT`, `UMAMI_QUEUE_SIZE` | Optional govue settings: post timeout and queue size | `5s`, `256` |
 
 Every secret-shaped variable has a `_FILE` twin. The schema is applied at startup, and
 `/readyz` stays unready until the database is reachable and the schema is applied.
 `WISHLIST_TEST_DATABASE_URL` is read by the tests only, see `AGENTS.md`. OIDC and everything
 else `AGENTS.md`'s "Scope of this milestone" lists stays out of scope.
+
+## Page view counting
+
+Counting is off unless `UMAMI_URL` and `UMAMI_WEBSITE_ID` are both set. Setting only one stops
+the start.
+
+- With counting on, the server reports one page view to Umami after it served the page.
+  Counting needs no script in the browser, sets no cookie and stores nothing on the device.
+- Reported: the page as the route pattern, never the path, an id, a share token or a query
+  string, the origin of the referring site, the browser language, the user agent and the client
+  address shortened to its first three bytes (IPv4) or six (IPv6).
+- Not counted: a visitor who sends Do Not Track or Global Privacy Control, prefetch, the API,
+  assets, health and metrics routes, and anything that is not a successful HTML page.
+- A guest's reservation and share routes are never reported by id or token: only the pattern is.
+- The privacy text states the operator's facts, which the code cannot show: Umami and the site
+  run on the owner's own hardware in Germany, access logs are kept 30 days, Umami data 14
+  months, the legal basis is Art. 6(1)(f) GDPR (accounts: Art. 6(1)(b)). Change them in
+  `PrivacyPage.vue` and `legal.test.ts` together.
+- The text lives in `web/src/legal/PrivacyPage.vue`, in German and English.
 
 ## Container
 

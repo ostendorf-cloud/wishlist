@@ -17,6 +17,24 @@
         "trustedProxies": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
     },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "siteUrl": { "type": "string", "pattern": "^(https?://[^/@?# ]+/?)?$" },
+        "umami": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url": { "type": "string", "pattern": "^(https?://.*)?$" },
+            "websiteId": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?$"
+            }
+          }
+        }
+      }
+    },
     "image": {
       "type": "object",
       "required": ["repository"],

@@ -1,0 +1,59 @@
+suite: page view counting through Umami
+templates:
+  - templates/deployment.yaml
+tests:
+  - it: sets none of the counting variables by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UMAMI_URL
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UMAMI_WEBSITE_ID
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SITE_URL
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+          any: true
+
+  - it: wires the url, the website id, the site url and the trusted proxies as plain values
+    set:
+      config:
+        siteUrl: https://wishes.example.com
+        umami:
+          url: https://umami.example.com
+          websiteId: 0a1b2c3d-0000-4000-8000-000000000001
+      auth:
+        trustedProxies:
+          - 10.0.0.0/8
+          - 192.0.2.1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UMAMI_URL
+            value: https://umami.example.com
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: UMAMI_WEBSITE_ID
+            value: 0a1b2c3d-0000-4000-8000-000000000001
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SITE_URL
+            value: https://wishes.example.com
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: 10.0.0.0/8,192.0.2.1

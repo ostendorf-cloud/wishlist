@@ -87,6 +87,18 @@ spec:
             - name: TRUSTED_PROXIES
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- with .Values.config.siteUrl }}
+            - name: SITE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.umami.url }}
+            - name: UMAMI_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.umami.websiteId }}
+            - name: UMAMI_WEBSITE_ID
+              value: {{ . | quote }}
+            {{- end }}
             # The password is a file, never an environment value: it would show
             # up in "kubectl describe" and in the process environment.
             - name: DB_PASSWORD_FILE

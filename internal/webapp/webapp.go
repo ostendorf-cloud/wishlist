@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/analytics"
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/csrf"
@@ -57,6 +58,8 @@ type Config struct {
 	// ClientIPs resolves the client address of the limits and the log. Nil
 	// trusts no proxy header.
 	ClientIPs *clientip.Resolver
+	// Views counts page views, see NewViews. Nil counts nothing.
+	Views *analytics.Client
 	// Dist is the built SPA.
 	Dist   fs.FS
 	Logger *slog.Logger
@@ -70,6 +73,22 @@ type Auth interface {
 	ClientLimit(http.Handler) http.Handler
 	// Mount registers the account routes.
 	Mount(mux *http.ServeMux, route, checked func(http.Handler) http.Handler)
+}
+
+// NewViews builds the page view counter. It is the one place the privacy
+// relevant choices are made: the client address is resolved by ips, built
+// from the configured trusted proxies only, and it is masked, never sent
+// whole (FullIP stays false), and no title is sent. hostname is the bare
+// host of the site. client may be nil for govue's default client, a test
+// passes one with a fake transport. onDrop may be nil.
+func NewViews(cfg analytics.Config, hostname string, ips *clientip.Resolver, logger *slog.Logger, client *http.Client, onDrop func()) (*analytics.Client, error) {
+	return analytics.New(cfg, analytics.Options{
+		Hostname:   hostname,
+		Logger:     logger,
+		HTTPClient: client,
+		ClientIP:   ips,
+		OnDrop:     onDrop,
+	})
 }
 
 // Handler builds the public handler.
@@ -142,11 +161,21 @@ func Handler(cfg Config) (http.Handler, error) {
 	}
 	mux.Handle("/", spa(cfg.Dist))
 
-	return middleware.Chain(mux,
+	chain := []middleware.Middleware{
 		middleware.Recover(logger),
 		middleware.RequestID(logger),
 		middleware.AccessLog{ClientIP: ips}.Middleware,
-	), nil
+	}
+	// Innermost, directly around the mux, because it reads r.Pattern and
+	// RequestID replaces the request. A view is counted by its route pattern
+	// only, so no id, token or query string of a request is ever reported.
+	// The owner API answers JSON and the SPA files are no HTML page with a
+	// pattern of their own, so neither is counted. It is the mux itself when
+	// counting is off.
+	if cfg.Views != nil {
+		chain = append(chain, cfg.Views.Middleware)
+	}
+	return middleware.Chain(mux, chain...), nil
 }
 
 // spaRoutes are the first path segments of the routes in web/src/router.ts.

@@ -277,9 +277,10 @@ Everything else is a 404: JSON under `/api/`, plain text elsewhere. `/metrics`, 
 `/readyz` are on the admin listener only, and `scripts/smoke-test-image.sh` pins that. A new
 top level route in the SPA needs its first segment in `spaRoutes`.
 
-The rate limiter keys by the client address from `internal/auth`'s resolver: the connection
-address unless `TRUSTED_PROXIES` names the proxy in front. Behind an ingress without it everyone
-shares one bucket, so set it before the first deployment.
+The rate limiter, the access log and the page view counting key by the client address from one
+resolver (`clientip`, built from `TRUSTED_PROXIES`): the connection address unless
+`TRUSTED_PROXIES` names the proxy in front. Behind an ingress without it everyone shares one
+bucket, so set it before the first deployment.
 
 Left out on purpose: images (the keys that delete returns are counted in a debug log line, the
 objects are not deleted: image milestone), share tokens, guest access, translations, link
@@ -307,6 +308,25 @@ text in the same pull request. The site has no terms, so `/terms` and `/agb` do 
   `web/src/legal/site.ts`.
 - The router holds the four legal paths from govue's `legalRoutes`, so the bundle that loads
   on a legal page shows it instead of redirecting to the dashboard.
+
+## Page view counting
+
+The server reports page views to Umami through govue's `analytics` package. Nothing is built
+here that govue provides. Off unless `UMAMI_URL` and `UMAMI_WEBSITE_ID` are both set.
+`SITE_URL` (default `https://my-wishes.de`) gives the hostname sent to Umami, its bare host.
+
+- `webapp.Handler` puts `Config.Views.Middleware` innermost, directly around the mux, because it
+  reads `r.Pattern`. `RequestID` replaces the request, so moving it outward loses the pattern
+  and counts nothing; `internal/webapp/analytics_test.go` fails then.
+- Reservation blindness: only the route pattern is reported, never a path, an id, a share token,
+  a reservation or a query. Today the SPA fallback `/` and the four legal pages are the only
+  HTML patterns. A guest page added later is registered through the mux with a pattern, and
+  `TestCountingReportsTheRoutePatternAndNeverAnIdATokenOrAQuery` is extended with its path.
+- The owner API answers JSON and is never counted. A route that answers HTML needs a pattern.
+- `TRUSTED_PROXIES` must name the ingress, or every view comes from the proxy and none counts.
+- `NewViews` is the one place of the privacy relevant choices: masked address (`FullIP` stays
+  false), no title. A change to what is reported needs an update of
+  `web/src/legal/PrivacyPage.vue` (both languages) and the README section "Page view counting".
 
 ## Store tests
 
