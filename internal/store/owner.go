@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // UpsertOwner records the account behind an OIDC subject and returns it. The
@@ -389,10 +390,17 @@ func (s *OwnerStore) MoveWish(ctx context.Context, ownerID, wishID int64, direct
 	})
 }
 
+// foreignKeyViolation is PostgreSQL's SQLSTATE for a row whose parent is gone.
+const foreignKeyViolation = "23503"
+
 // MoveWishToList puts a wish at the end of another list. Both the wish and the
 // list have to be the owner's: a foreign wish and a foreign list are alike
 // ErrNotFound, so the caller cannot tell them from rows that do not exist. The
-// wish keeps its archived flag.
+// wish keeps its archived flag. Moving a wish into the list it is already on
+// puts it last. Two moves into one list at the same moment may pick the same
+// position, which is harmless: the id breaks the tie when the list is read.
+// A list deleted between the check and the write is a foreign key violation
+// (23503) and is ErrNotFound as well.
 func (s *OwnerStore) MoveWishToList(ctx context.Context, ownerID, wishID, listID int64) error {
 	tag, err := s.pool.Exec(ctx, `
 		update wishes w
@@ -405,6 +413,10 @@ func (s *OwnerStore) MoveWishToList(ctx context.Context, ownerID, wishID, listID
 		  and l.id = $3 and l.owner_id = $2`,
 		wishID, ownerID, listID)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation {
+			return ErrNotFound
+		}
 		return fmt.Errorf("move wish to list: %w", err)
 	}
 	if tag.RowsAffected() == 0 {

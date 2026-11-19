@@ -126,13 +126,22 @@ errors come as stable keys (`required`, `too_long`, `invalid`) in `error.details
 ### Blindness of the responses (ADR 0001, response layer)
 
 Mechanism: reflection over the response types. Every handler returns a typed value and one
-adapter in `owner.go` writes it, so the route table names exactly what can go out.
+adapter in `owner.go` writes it, so the route table names the type of every response that
+route sends. That holds for the routes in `Routes()` only. Two tests keep it true:
+`TestOnlyTheAdapterWritesAResponse` fails when any file under `internal/webapp` writes a body
+outside the adapter, and `TestEveryRegisteredPatternComesFromTheRouteTable` fails when a
+handler is registered anywhere except from the table (and the two catch alls in `webapp.go`).
+Error bodies are govue's envelope, which the walk does not see: `fieldProblem` in `validate.go`
+is the only place that sets details, and it fails closed unless every key is a known request
+field and every value one of the three codes.
 `blindness_test.go` walks each response type: struct fields (embedded too), pointers, slices,
 arrays and maps. It fails on any named type of `internal/store` (which covers `Reservation`,
 `GuestWish`, `GuestList` and whatever is added to `guest.go` later), on a type or field whose Go
-or JSON name matches `reserv|guest|taken|bought|pledge`, on an interface (an `any` field is a
-violation), a func or a channel, and on a type with its own JSON or text encoding, which would
-hide its fields. `TestTheWalkCatchesEveryWayAReservationCanGetOut` proves each shape fails.
+or JSON name matches `reserv|guest|taken|bought|pledge|claim|purchas|book|contrib|donor|amount_?cents`
+(a heuristic: the typed walk is the real guard), on an interface (an `any` field is a
+violation), a func or a channel, on a `[]byte` or `map[string]string` field, and on a type with
+its own JSON or text encoding, which would hide its fields.
+`TestTheWalkCatchesEveryWayAReservationCanGetOut` proves each shape fails.
 Why reflection and not a generator or a lint rule: it follows the types the encoder really
 serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on every machine.
 
@@ -181,6 +190,9 @@ the fixed body of `refusal` in `handlers.go`. A bad body is refused before the s
 so the answer to it does not depend on whether the row exists. The store scopes every query by
 owner id and returns `ErrNotFound` for a foreign row; `fail` maps only that to the refusal.
 Moving a wish to a list needs both rows to be the owner's.
+
+The rate limiter keys by connection address. Behind an ingress everyone shares one bucket, so
+it needs a trusted proxy setting before the first deployment.
 
 Left out on purpose: images (the keys that delete returns are counted in a debug log line, the
 objects are not deleted: image milestone), share tokens, guest access, translations, link

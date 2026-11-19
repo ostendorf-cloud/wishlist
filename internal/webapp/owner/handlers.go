@@ -246,8 +246,7 @@ func (a *API) moveWish(r *http.Request, owner int64) error {
 	case "down":
 		direction = 1
 	default:
-		return api.Invalid("direction must be up or down").
-			WithDetails(map[string]any{"direction": codeInvalid})
+		return fieldProblem("direction must be up or down", map[string]string{"direction": codeInvalid})
 	}
 	return fail(a.store.MoveWish(r.Context(), owner, id, direction))
 }
@@ -262,8 +261,7 @@ func (a *API) relocateWish(r *http.Request, owner int64) (dto.Wish, error) {
 		return dto.Wish{}, err
 	}
 	if req.ListID < 1 {
-		return dto.Wish{}, api.Invalid("list_id is required").
-			WithDetails(map[string]any{"list_id": codeRequired})
+		return dto.Wish{}, fieldProblem("list_id is required", map[string]string{"list_id": codeRequired})
 	}
 	if err := a.store.MoveWishToList(r.Context(), owner, id, req.ListID); err != nil {
 		return dto.Wish{}, fail(err)

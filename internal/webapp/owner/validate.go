@@ -4,6 +4,7 @@
 package owner
 
 import (
+	"fmt"
 	"mime"
 	"net/http"
 	"net/url"
@@ -39,14 +40,44 @@ const (
 	codeInvalid  = "invalid"
 )
 
-// fieldErrors collects the problems of one request.
-type fieldErrors map[string]any
+// knownFields are the only keys an error's details may carry: the request
+// fields a form can show a problem under. knownCodes are the only values.
+var (
+	knownFields = map[string]bool{
+		"title": true, "occasion": true, "greeting": true, "event_date": true,
+		"description": true, "url": true, "shop": true, "price_cents": true,
+		"currency": true, "priority": true, "quantity": true,
+		"direction": true, "list_id": true,
+	}
+	knownCodes = map[string]bool{codeRequired: true, codeTooLong: true, codeInvalid: true}
+)
+
+// fieldErrors collects the problems of one request: field name to code.
+type fieldErrors map[string]string
 
 func (f fieldErrors) err() error {
 	if len(f) == 0 {
 		return nil
 	}
-	return api.Invalid("some fields are not valid").WithDetails(f)
+	return fieldProblem("some fields are not valid", f)
+}
+
+// fieldProblem is the one place an error body gets details. The error body is
+// govue's envelope, which the blindness walk does not see, so the details are
+// held to a type it can: a map of string to string, with keys from knownFields
+// and values from knownCodes. Anything else fails closed as an internal error,
+// never as a detail the client reads.
+func fieldProblem(message string, f map[string]string) error {
+	for field, code := range f {
+		if !knownFields[field] || !knownCodes[code] {
+			return api.Internal(fmt.Errorf("owner api: unexpected error detail %q", field))
+		}
+	}
+	details := make(map[string]any, len(f))
+	for field, code := range f {
+		details[field] = code
+	}
+	return api.Invalid(message).WithDetails(details)
 }
 
 // decode reads a JSON body. Unlike api.Decode it requires the content type:

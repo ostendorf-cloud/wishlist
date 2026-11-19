@@ -575,6 +575,28 @@ func TestMoveWishToList(t *testing.T) {
 		}
 	})
 
+	t.Run("moving into its own list puts the wish last", func(t *testing.T) {
+		own, err := o.CreateList(ctx, f.owner.ID, ListInput{Title: "Own"})
+		if err != nil {
+			t.Fatalf("CreateList() error = %v", err)
+		}
+		firstOwn, err := o.CreateWish(ctx, f.owner.ID, own.ID, WishInput{Title: "First"})
+		if err != nil {
+			t.Fatalf("CreateWish() error = %v", err)
+		}
+		secondOwn, err := o.CreateWish(ctx, f.owner.ID, own.ID, WishInput{Title: "Second"})
+		if err != nil {
+			t.Fatalf("CreateWish() error = %v", err)
+		}
+		if err := o.MoveWishToList(ctx, f.owner.ID, firstOwn.ID, own.ID); err != nil {
+			t.Fatalf("MoveWishToList() error = %v", err)
+		}
+		got, err := o.Wishes(ctx, f.owner.ID, own.ID, true)
+		if err != nil || len(got) != 2 || got[0].ID != secondOwn.ID || got[1].ID != firstOwn.ID {
+			t.Errorf("wishes = %+v, %v, want the second one first and the moved one last", got, err)
+		}
+	})
+
 	t.Run("the wish goes to the end of the other list and keeps its flag", func(t *testing.T) {
 		if err := o.MoveWishToList(ctx, f.owner.ID, f.wish.ID, target.ID); err != nil {
 			t.Fatalf("MoveWishToList() error = %v", err)

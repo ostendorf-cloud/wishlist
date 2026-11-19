@@ -22,7 +22,11 @@ import (
 	"encoding"
 	"encoding/json"
 	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -38,8 +42,12 @@ import (
 // storePath is the import path of the store, whose types never go out.
 const storePath = "github.com/ostendorf-cloud/wishlist/internal/store"
 
-// blindName matches a name that speaks of what guests did.
-var blindName = regexp.MustCompile(`(?i)reserv|guest|taken|bought|pledge`)
+// blindName matches a name that speaks of what guests did. The name check is a
+// heuristic: a clever name gets past it. The typed walk (no store type, no
+// interface, no opaque encoding, no free form bytes or string map) is the
+// real guard, and review of every new DTO field is the last one.
+var blindName = regexp.MustCompile(
+	`(?i)reserv|guest|taken|bought|pledge|claim|purchas|book|contrib|donor|amount_?cents`)
 
 // allowedNames are the fields that match blindName and are harmless: the
 // owner's own setting of whether guests may still take wishes. A value, not
@@ -104,6 +112,11 @@ func (w *walker) walk(t reflect.Type, path string) {
 			if !allowedNames[key] && (blindName.MatchString(f.Name) || blindName.MatchString(jsonName)) {
 				w.add(path+"."+f.Name, "field named like a reservation")
 			}
+			// Free form content cannot be walked: a byte slice or a string
+			// map can carry anything. Allow one only by name, reviewed.
+			if !allowedNames[key] && freeForm(f.Type) {
+				w.add(path+"."+f.Name, "free form field ([]byte or map[string]string)")
+			}
 			w.walk(f.Type, path+"."+f.Name)
 		}
 	case reflect.Pointer, reflect.Slice, reflect.Array:
@@ -117,6 +130,20 @@ func (w *walker) walk(t reflect.Type, path string) {
 		w.add(path, "kind "+t.Kind().String()+" cannot be checked")
 	default:
 		// Basic kinds carry no structure.
+	}
+}
+
+func freeForm(t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Slice:
+		return t.Elem().Kind() == reflect.Uint8
+	case reflect.Map:
+		return t.Key().Kind() == reflect.String && t.Elem().Kind() == reflect.String
+	default:
+		return false
 	}
 }
 
@@ -171,7 +198,14 @@ type (
 	ignoredField struct {
 		Hidden store.Reservation `json:"-"`
 	}
-	fine struct {
+	claimed     struct{ Claimed bool }
+	purchased   struct{ PurchasedBy string }
+	booked      struct{ Booking int }
+	contributor struct{ Contributors []string }
+	donated     struct{ AmountCents int64 }
+	rawBytes    struct{ Blob []byte }
+	stringMap   struct{ Labels map[string]string }
+	fine        struct {
 		A int
 		T time.Time
 		P *int64
@@ -203,6 +237,13 @@ func TestTheWalkCatchesEveryWayAReservationCanGetOut(t *testing.T) {
 		{"embedded", reflect.TypeFor[embeddedBad](), true},
 		{"deep pointer and array", reflect.TypeFor[deepPointer](), true},
 		{"type named Reservation", reflect.TypeFor[typeNamed](), true},
+		{"field claimed", reflect.TypeFor[claimed](), true},
+		{"field purchased", reflect.TypeFor[purchased](), true},
+		{"field booking", reflect.TypeFor[booked](), true},
+		{"field contributors", reflect.TypeFor[contributor](), true},
+		{"field amount cents", reflect.TypeFor[donated](), true},
+		{"raw bytes", reflect.TypeFor[rawBytes](), true},
+		{"string map", reflect.TypeFor[stringMap](), true},
 		{"json dash hides the field from the wire", reflect.TypeFor[ignoredField](), false},
 		{"plain fields and time", reflect.TypeFor[fine](), false},
 		{"the real list", reflect.TypeFor[dto.ListDetail](), false},
@@ -217,28 +258,108 @@ func TestTheWalkCatchesEveryWayAReservationCanGetOut(t *testing.T) {
 	}
 }
 
-// The adapter is the only place a body is written, and the route table names
-// its type. This keeps a handler from writing around it.
+// writers are the selectors that put bytes on a response.
+var writers = []string{
+	"Write", "WriteHeader", "WriteString", "NoContent", "NewEncoder", "Marshal",
+	"MarshalIndent", "Fprint", "Fprintf", "Fprintln", "WithDetails",
+}
+
+// The adapter in owner/owner.go is the only place a body is written; the
+// route table names its type, and the reflection walk reads that type. This
+// keeps anything under internal/webapp from writing around it. Allowed apart
+// from the adapter: WithDetails in fieldProblem (validate.go), which holds the
+// details of an error to field names and codes, and in webapp.go only the
+// refusal of the CSRF protector (api.WriteError) and the SPA, which writes no
+// bytes itself.
 func TestOnlyTheAdapterWritesAResponse(t *testing.T) {
-	for name, file := range parseNonTest(t, ".") {
-		if name == "owner.go" {
-			continue
-		}
+	files := webappFiles(t)
+	for path, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch x := n.(type) {
-			case *ast.Ident:
-				if x.Name == "ResponseWriter" {
-					t.Errorf("%s: handlers must return a value, not take a ResponseWriter", name)
-				}
 			case *ast.SelectorExpr:
-				if id, ok := x.X.(*ast.Ident); ok {
-					call := id.Name + "." + x.Sel.Name
-					if slices.Contains([]string{"api.Write", "api.NoContent", "json.NewEncoder", "http.Error", "json.Marshal"}, call) {
-						t.Errorf("%s: %s writes around the typed adapter", name, call)
-					}
+				if x.Sel.Name == "WithDetails" && path == "validate.go" {
+					return true
+				}
+				if slices.Contains(writers, x.Sel.Name) && path != "owner.go" {
+					t.Errorf("%s: %s writes around the typed adapter", path, x.Sel.Name)
+				}
+				if id, ok := x.X.(*ast.Ident); ok && id.Name == "http" && x.Sel.Name == "Error" {
+					t.Errorf("%s: http.Error writes around the typed adapter", path)
+				}
+			case *ast.Ident:
+				// A handler returns a value. Only the adapter, the CSRF refusal
+				// and the SPA in webapp.go touch a ResponseWriter.
+				if x.Name == "ResponseWriter" && path != "owner.go" && path != filepath.Join("..", "webapp.go") {
+					t.Errorf("%s: handlers must return a value, not take a ResponseWriter", path)
 				}
 			}
 			return true
 		})
 	}
+}
+
+// Every route under the owner prefix comes from Routes(): the only calls that
+// register a handler are Register's, from the table, and the two catch alls in
+// webapp.go. An endpoint added by hand next to them would skip both the
+// resolver and the response walk.
+func TestEveryRegisteredPatternComesFromTheRouteTable(t *testing.T) {
+	registered := 0
+	for path, file := range webappFiles(t) {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || (sel.Sel.Name != "Handle" && sel.Sel.Name != "HandleFunc") {
+				return true
+			}
+			// api.Handle is govue's error adapter, not a registration.
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "api" {
+				return true
+			}
+			registered++
+			if len(call.Args) == 0 {
+				t.Errorf("%s: %s without a pattern", path, sel.Sel.Name)
+				return true
+			}
+			switch arg := call.Args[0].(type) {
+			case *ast.BasicLit:
+				if path == filepath.Join("..", "webapp.go") && (arg.Value == `"/api/"` || arg.Value == `"/"`) {
+					return true
+				}
+			case *ast.CallExpr:
+				if inner, ok := arg.Fun.(*ast.SelectorExpr); ok && inner.Sel.Name == "Pattern" && path == "owner.go" {
+					return true
+				}
+			}
+			t.Errorf("%s: a handler is registered by hand, not from Routes()", path)
+			return true
+		})
+	}
+	if registered != 3 {
+		t.Errorf("found %d registrations, want the one in Register and the two catch alls", registered)
+	}
+}
+
+// webappFiles parses every non test file under internal/webapp, keyed by its
+// path relative to this package: owner.go, ../webapp.go, dto/dto.go.
+func webappFiles(t *testing.T) map[string]*ast.File {
+	t.Helper()
+	out := map[string]*ast.File{}
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		out[strings.TrimPrefix(path, "../owner/")] = file
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ostendorf-cloud/govue/api"
+
 	"github.com/ostendorf-cloud/wishlist/internal/store"
 	"github.com/ostendorf-cloud/wishlist/internal/webapp/owner/dto"
 	"github.com/ostendorf-cloud/wishlist/internal/webapp/owner/ownertest"
@@ -561,6 +563,38 @@ func TestAStoreFailureIsAnInternalErrorWithoutDetail(t *testing.T) {
 		if strings.Contains(rec.Body.String(), "10.1.2.3") || strings.Contains(rec.Body.String(), "relation") {
 			t.Errorf("%s %s leaks the cause: %s", c.method, c.path, rec.Body)
 		}
+	}
+}
+
+// Error details are held to field names and codes: anything else fails closed
+// as a 500, so a fact added to a details map never reaches the client.
+func TestErrorDetailsCarryOnlyFieldCodes(t *testing.T) {
+	cases := []struct {
+		name    string
+		details map[string]string
+		wantErr bool
+	}{
+		{"a field and a code", map[string]string{"title": "required"}, false},
+		{"an unknown key", map[string]string{"direction": "invalid", "reserved_by": "invalid"}, true},
+		{"an unknown code", map[string]string{"title": "aunt"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fieldProblem("x", tc.details)
+			var apiErr *api.Error
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("err = %v, want an api error", err)
+			}
+			if got := apiErr.Status == http.StatusInternalServerError; got != tc.wantErr {
+				t.Errorf("status = %d, want internal error: %v", apiErr.Status, tc.wantErr)
+			}
+		})
+	}
+
+	w := newWorld(t)
+	rec := w.do(t, call{method: "POST", path: "/wishes/1/move", owner: alice, body: `{"direction":"sideways"}`})
+	if _, details := errorCode(t, rec); rec.Code != 400 || len(details) != 1 || details["direction"] != "invalid" {
+		t.Errorf("move = %d %v, want 400 with exactly the direction", rec.Code, details)
 	}
 }
 
