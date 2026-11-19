@@ -3,6 +3,9 @@ templates:
   - templates/httproute.yaml
   - templates/ingress.yaml
 set:
+  auth:
+    trustedProxies:
+      - 10.42.0.0/16
   httpRoute:
     enabled: true
     hostnames:

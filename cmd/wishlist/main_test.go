@@ -12,6 +12,8 @@ import (
 
 	"github.com/ostendorf-cloud/govue/health"
 
+	"github.com/ostendorf-cloud/wishlist/internal/accounts"
+	"github.com/ostendorf-cloud/wishlist/internal/config"
 	"github.com/ostendorf-cloud/wishlist/internal/webapp/owner/ownertest"
 )
 
@@ -25,12 +27,16 @@ func TestEmbeddedDistBuildsAWorkingHandler(t *testing.T) {
 		t.Fatalf("fs.Sub(distFS, \"dist\") error = %v", err)
 	}
 
-	handler, err := buildHandler(slog.New(slog.DiscardHandler), ownertest.New(), resolveOwner("", nil, slog.New(slog.DiscardHandler)))
+	handler, err := buildHandler(slog.New(slog.DiscardHandler), handlerDeps{
+		owners:   ownertest.New(),
+		accounts: accounts.New(newFakeBackend()),
+		cfg:      config.Config{RegistrationOpen: true},
+	})
 	if err != nil {
 		t.Fatalf("buildHandler() error = %v", err)
 	}
 
-	// Until the sign in exists nobody is an owner, and the SPA still loads.
+	// Without a session nobody is an owner, and the SPA still loads.
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/owner/lists", nil))
 	if rec.Code != http.StatusUnauthorized {

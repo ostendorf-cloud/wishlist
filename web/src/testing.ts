@@ -5,8 +5,10 @@
 
 import { render } from '@testing-library/vue'
 import { ApiError, createGovueI18n, ErrorCode } from '@ostendorf-cloud/govue'
-import { vi } from 'vitest'
+import { reactive } from 'vue'
+import { vi, type Mock } from 'vitest'
 
+import { authKey, type Auth, type AuthState } from './api/auth'
 import { ownerApiKey, type OwnerApi } from './api/owner'
 import type { List, Wish } from './api/types'
 import App from './App.vue'
@@ -89,9 +91,35 @@ export function apiError(
 
 export const notFound = (): ApiError => apiError(ErrorCode.notFound, 404)
 
-/** Renders the whole app at a route with a fake API. */
-export async function renderApp(api: OwnerApi, route = '/') {
-  const router = createTestRouter()
+/**
+ * An Auth whose answers a test controls. The client is a bare object whose calls
+ * are spies, so a form posts into it and a test reads what was sent.
+ */
+export function fakeAuth(options: { signedIn?: boolean; registrationOpen?: boolean } = {}): Auth & {
+  client: { get: Mock; post: Mock; put: Mock; patch: Mock; del: Mock }
+  refresh: Mock
+  signOut: Mock
+} {
+  const state = reactive<AuthState>({
+    loaded: true,
+    signedIn: options.signedIn ?? true,
+    login: options.signedIn === false ? '' : 'alice@example.invalid',
+    registrationOpen: options.registrationOpen ?? true,
+  })
+  return {
+    state,
+    client: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), del: vi.fn() },
+    refresh: vi.fn().mockResolvedValue(undefined),
+    signOut: vi.fn().mockImplementation(() => {
+      state.signedIn = false
+      return Promise.resolve()
+    }),
+  }
+}
+
+/** Renders the whole app at a route with a fake API, signed in unless told otherwise. */
+export async function renderApp(api: OwnerApi, route = '/', auth = fakeAuth()) {
+  const router = createTestRouter(auth)
   await router.push(route)
   // The language layer as main.ts installs it, without a stored choice: a legal
   // path names its language, any other page is English here.
@@ -100,8 +128,11 @@ export async function renderApp(api: OwnerApi, route = '/') {
     storage: { kind: 'none' },
   })
   const result = render(App, {
-    global: { plugins: [router, language], provide: { [ownerApiKey]: api } },
+    global: {
+      plugins: [router, language],
+      provide: { [ownerApiKey]: api, [authKey]: auth },
+    },
   })
   await router.isReady()
-  return { router, ...result }
+  return { router, auth, ...result }
 }

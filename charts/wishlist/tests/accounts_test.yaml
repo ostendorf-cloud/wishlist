@@ -1,0 +1,114 @@
+suite: own accounts and the in-process session store
+templates:
+  - templates/deployment.yaml
+tests:
+  - it: keeps one replica, because sessions live in the memory of the process
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: allows turning the workload off
+    set:
+      replicaCount: 0
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 0
+
+  - it: closes registration by default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REGISTRATION_OPEN
+            value: "false"
+
+  - it: opens registration by value
+    set:
+      auth:
+        registrationOpen: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REGISTRATION_OPEN
+            value: "true"
+
+  - it: fails the render behind an ingress without trusted proxies
+    set:
+      ingress:
+        enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: auth.trustedProxies must be set
+
+  - it: fails the render behind an HTTPRoute without trusted proxies
+    set:
+      httpRoute:
+        enabled: true
+        parentRefs:
+          name: shared-gateway
+          namespace: gateway-system
+    asserts:
+      - failedTemplate:
+          errorPattern: auth.trustedProxies must be set
+
+  - it: renders behind an ingress with trusted proxies
+    set:
+      ingress:
+        enabled: true
+      auth:
+        trustedProxies:
+          - 10.42.0.0/16
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: 10.42.0.0/16
+
+  - it: renders without trusted proxies while no route is enabled
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: closes registration by value
+    set:
+      auth:
+        registrationOpen: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REGISTRATION_OPEN
+            value: "false"
+
+  - it: trusts no proxy by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: ""
+
+  - it: passes the trusted proxies as one list
+    set:
+      auth:
+        trustedProxies:
+          - 10.42.0.0/16
+          - 192.0.2.1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: 10.42.0.0/16,192.0.2.1
+
+  - it: never turns on the plain http session cookie
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: WISHLIST_ALLOW_PLAIN_HTTP
+            value: "true"

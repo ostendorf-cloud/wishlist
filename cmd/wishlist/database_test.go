@@ -153,10 +153,10 @@ func TestStartupAppliesTheSchemaAndBecomesReady(t *testing.T) {
 	if err := conn.QueryRow(t.Context(), `
 		select count(*) from pg_tables
 		where schemaname = 'public'
-		  and tablename in ('owners', 'lists', 'wishes', 'reservations', 'comments')`).Scan(&tables); err != nil {
+		  and tablename in ('owners', 'lists', 'wishes', 'reservations', 'comments', 'owner_credentials')`).Scan(&tables); err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	if tables != 5 {
-		t.Errorf("found %d of the 5 application tables after startup", tables)
+	if tables != 6 {
+		t.Errorf("found %d of the 6 application tables after startup", tables)
 	}
 }

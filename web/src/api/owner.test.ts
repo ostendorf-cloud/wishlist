@@ -4,7 +4,7 @@
 import { createClient } from '@ostendorf-cloud/govue'
 import { describe, expect, it } from 'vitest'
 
-import { createOwnerApi, readCsrfToken } from './owner'
+import { createOwnerApi } from './owner'
 import type { ListRequest, WishRequest } from './types'
 
 interface Seen {
@@ -141,15 +141,5 @@ describe('owner api', () => {
       details: { title: 'required' },
       requestId: 'r1',
     })
-  })
-
-  it('reads the CSRF token from the page when the server renders one', () => {
-    expect(readCsrfToken()).toBeUndefined()
-    const meta = document.createElement('meta')
-    meta.name = 'csrf-token'
-    meta.content = 'from-page'
-    document.head.append(meta)
-    expect(readCsrfToken()).toBe('from-page')
-    meta.remove()
   })
 })

@@ -44,16 +44,32 @@ const (
 type Config struct {
 	// Store is the owner's side of the store.
 	Store owner.Store
-	// Owner says who is signed in. The sign in (issue 4) supplies it.
+	// Owner says who is signed in. It reads what Auth.SessionMiddleware put
+	// in the request context.
 	Owner owner.Resolver
 	// CSRFExpected derives the token a request must carry from its session.
-	// It returns false while there is no session to protect, in which case
-	// only the origin check of the protector applies. The sign in (issue 4)
-	// supplies the real one.
+	// It returns false for a request without a session, which carries no
+	// authority to borrow, and then only the origin check applies.
 	CSRFExpected csrf.Expected
+	// Auth is the sign in. Nil mounts no account route and reads no session,
+	// which only tests do.
+	Auth Auth
+	// ClientIPs resolves the client address of the limits and the log. Nil
+	// trusts no proxy header.
+	ClientIPs *clientip.Resolver
 	// Dist is the built SPA.
 	Dist   fs.FS
 	Logger *slog.Logger
+}
+
+// Auth is what the public handler needs from the sign in, see internal/auth.
+type Auth interface {
+	// SessionMiddleware reads the session into the request context.
+	SessionMiddleware(http.Handler) http.Handler
+	// ClientLimit is the stricter per address limit of the password routes.
+	ClientLimit(http.Handler) http.Handler
+	// Mount registers the account routes.
+	Mount(mux *http.ServeMux, route, checked func(http.Handler) http.Handler)
 }
 
 // Handler builds the public handler.
@@ -83,7 +99,10 @@ func Handler(cfg Config) (http.Handler, error) {
 		api.WriteError(w, r, api.PermissionDenied("cross origin or stale request, please reload"))
 	})
 
-	ips := clientip.NewResolver(nil)
+	ips := cfg.ClientIPs
+	if ips == nil {
+		ips = clientip.NewResolver(nil)
+	}
 	limit, err := middleware.NewRateLimit(middleware.RateLimitConfig{
 		Limiter:  ratelimit.New(rateBurst, ratePer, maxRateKeys),
 		ClientIP: ips,
@@ -92,12 +111,26 @@ func Handler(cfg Config) (http.Handler, error) {
 		return nil, err
 	}
 
+	// The session middleware sits after the protector, so a request is checked
+	// before its cookie is read.
+	after := []middleware.Middleware{protector.Middleware}
+	if cfg.Auth != nil {
+		after = append(after, cfg.Auth.SessionMiddleware)
+	}
 	route := func(h http.Handler) http.Handler {
-		return middleware.Chain(h, limit.Middleware, protector.Middleware)
+		return middleware.Chain(h, append([]middleware.Middleware{limit.Middleware}, after...)...)
 	}
 
 	mux := http.NewServeMux()
 	ownerAPI.Register(mux, route)
+	if cfg.Auth != nil {
+		// The stricter limit of the routes that check a password sits next
+		// to the general one, ahead of the protector and the session.
+		checked := func(h http.Handler) http.Handler {
+			return middleware.Chain(h, append([]middleware.Middleware{limit.Middleware, cfg.Auth.ClientLimit}, after...)...)
+		}
+		cfg.Auth.Mount(mux, route, checked)
+	}
 	// Anything else under /api is an unknown endpoint in the error shape,
 	// never the SPA's index page.
 	mux.Handle("/api/", route(api.NotFoundHandler()))
@@ -121,7 +154,7 @@ func Handler(cfg Config) (http.Handler, error) {
 // built file is a plain 404, so the public port never answers /metrics,
 // /healthz or an unknown path with an HTML page (the smoke test pins that).
 // TestSPARoutesCoverTheRouter keeps this list and the router in step.
-var spaRoutes = []string{"/lists", "/wishes"}
+var spaRoutes = []string{"/lists", "/wishes", "/login", "/signup"}
 
 func isSPARoute(p string) bool {
 	if path.Ext(p) != "" {

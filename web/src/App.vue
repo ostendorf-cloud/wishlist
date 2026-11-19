@@ -5,6 +5,7 @@
 import { GovueFooter, GovueHeader, GovueSkipLink, GovueToastHost } from '@ostendorf-cloud/govue'
 import { RouterLink, RouterView } from 'vue-router'
 
+import SignOutButton from './components/SignOutButton.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import { messages } from './messages'
 </script>
@@ -17,6 +18,7 @@ import { messages } from './messages'
     </template>
     <template #actions>
       <ThemeToggle />
+      <SignOutButton />
     </template>
   </GovueHeader>
   <RouterView />

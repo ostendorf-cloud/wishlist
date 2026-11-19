@@ -12,10 +12,10 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
-	"regexp"
 	"slices"
 	"time"
 
+	"github.com/ostendorf-cloud/govue/clientip"
 	"github.com/ostendorf-cloud/govue/envconf"
 	"github.com/ostendorf-cloud/govue/logging"
 )
@@ -31,14 +31,16 @@ type Config struct {
 	LogLevel  slog.Level
 	// Database is the PostgreSQL connection.
 	Database Database
-	// DevOwner, when set, signs every request in as this one development
-	// account. It exists only until the owner sign in (issue 4) and is
-	// refused unless the listener is loopback, see Load.
-	DevOwner string
+	// RegistrationOpen lets anybody create an owner account. Off by default.
+	RegistrationOpen bool
+	// AllowPlainHTTP drops the Secure attribute and the __Host- prefix of the
+	// session cookie, for development over http. Refused unless the listener
+	// is loopback, see Load.
+	AllowPlainHTTP bool
+	// TrustedProxies are the peers whose X-Forwarded-For is believed. Empty
+	// trusts nothing: every limit then keys by the connection address.
+	TrustedProxies []netip.Prefix
 }
-
-// devOwnerName is what a development owner may be called.
-var devOwnerName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
 
 // loopbackListener says whether addr binds the loopback interface only. An
 // empty host, 0.0.0.0 and :: bind every interface and are not loopback.
@@ -158,24 +160,29 @@ func Load(getenv func(string) string) (Config, error) {
 		problems = append(problems, fmt.Errorf("envconf: DB_SSLMODE: must be one of %v, got %q", sslModes, cfg.Database.SSLMode))
 	}
 
-	// The development owner is a sign in without a password, so it is opt in
-	// twice. The name turns it on. It is then honoured only when the public
-	// listener is loopback, or when the operator states that the listener is
-	// reachable from the loopback interface only by other means: docker
-	// compose binds the container to every interface and publishes the port on
-	// 127.0.0.1. The Helm chart passes neither variable.
-	cfg.DevOwner = l.String("WISHLIST_DEV_OWNER", "")
-	anyListener := l.Bool("WISHLIST_DEV_OWNER_ANY_LISTENER", false)
-	if cfg.DevOwner != "" {
-		if !devOwnerName.MatchString(cfg.DevOwner) {
-			problems = append(problems, errors.New("envconf: WISHLIST_DEV_OWNER: must be 1 to 40 characters of a-z, 0-9, _ and -"))
-		}
+	cfg.RegistrationOpen = l.Bool("REGISTRATION_OPEN", false)
+
+	proxies, err := clientip.ParseCIDRs(l.String("TRUSTED_PROXIES", ""))
+	if err != nil {
+		problems = append(problems, fmt.Errorf("envconf: TRUSTED_PROXIES: %w", err))
+	}
+	cfg.TrustedProxies = proxies
+
+	// A session cookie over plain http travels in the clear, so it is opt in
+	// twice. The first variable turns it on. It is then honoured only when the
+	// public listener is loopback, or when the operator states that the
+	// listener is reachable from the loopback interface only by other means:
+	// docker compose binds the container to every interface and publishes the
+	// port on 127.0.0.1. The Helm chart passes neither variable.
+	cfg.AllowPlainHTTP = l.Bool("WISHLIST_ALLOW_PLAIN_HTTP", false)
+	anyListener := l.Bool("WISHLIST_ALLOW_PLAIN_HTTP_ANY_LISTENER", false)
+	if cfg.AllowPlainHTTP {
 		if !anyListener && !loopbackListener(cfg.Addr) {
-			problems = append(problems, fmt.Errorf("envconf: WISHLIST_DEV_OWNER: refused, ADDR %q is not a loopback address; "+
-				"set WISHLIST_DEV_OWNER_ANY_LISTENER=true only where the port is published on 127.0.0.1", cfg.Addr))
+			problems = append(problems, fmt.Errorf("envconf: WISHLIST_ALLOW_PLAIN_HTTP: refused, ADDR %q is not a loopback address; "+
+				"set WISHLIST_ALLOW_PLAIN_HTTP_ANY_LISTENER=true only where the port is published on 127.0.0.1", cfg.Addr))
 		}
 	} else if anyListener {
-		problems = append(problems, errors.New("envconf: WISHLIST_DEV_OWNER_ANY_LISTENER: has no effect without WISHLIST_DEV_OWNER"))
+		problems = append(problems, errors.New("envconf: WISHLIST_ALLOW_PLAIN_HTTP_ANY_LISTENER: has no effect without WISHLIST_ALLOW_PLAIN_HTTP"))
 	}
 
 	if err := errors.Join(append(problems, l.Err())...); err != nil {

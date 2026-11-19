@@ -2,6 +2,9 @@ suite: ingress and httpRoute are mutually exclusive
 templates:
   - templates/deployment.yaml
 set:
+  auth:
+    trustedProxies:
+      - 10.42.0.0/16
   ingress:
     enabled: true
   httpRoute:
