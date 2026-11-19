@@ -12,7 +12,7 @@ const { locale } = useLanguage()
 </script>
 
 <template>
-  <GovueLegalPage page="imprint" :skip-link="false">
+  <GovueLegalPage page="imprint" back-href="/" :skip-link="false">
     <div v-if="locale === 'de'" class="flex flex-col gap-4 text-text" lang="de">
       <p>
         Simon Ostendorf<br />

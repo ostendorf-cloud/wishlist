@@ -342,6 +342,53 @@ func TestEveryRegisteredPatternComesFromTheRouteTable(t *testing.T) {
 	}
 }
 
+// The registration test above sees only .Handle calls under internal/webapp.
+// A helper in another package that gets the public mux can register a handler
+// out of its sight, so every call that passes the mux elsewhere must be one of
+// these. internal/legal is the one outside writer: it is held to the standard
+// library and govue's language package by its own boundary_test.go.
+// middleware.Chain is govue's wrapper around the finished mux, the outer
+// chain: it takes the mux as a handler and registers nothing.
+var allowedMuxHelpers = []string{"ownerAPI.Register", "legal.Register", "middleware.Chain"}
+
+func TestOnlyKnownHelpersGetThePublicMux(t *testing.T) {
+	found := map[string]bool{}
+	for path, file := range webappFiles(t) {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			recv, _ := sel.X.(*ast.Ident)
+			if recv != nil && recv.Name == "mux" {
+				return true // a method of the mux itself, counted by the test above
+			}
+			for _, arg := range call.Args {
+				if id, ok := arg.(*ast.Ident); ok && id.Name == "mux" {
+					name := sel.Sel.Name
+					if recv != nil {
+						name = recv.Name + "." + name
+					}
+					if !slices.Contains(allowedMuxHelpers, name) {
+						t.Errorf("%s: %s gets the public mux and is not in allowedMuxHelpers", path, name)
+					}
+					found[name] = true
+				}
+			}
+			return true
+		})
+	}
+	for _, name := range allowedMuxHelpers {
+		if !found[name] {
+			t.Errorf("%s is allowed but no longer called: the list is stale", name)
+		}
+	}
+}
+
 // webappFiles parses every non test file under internal/webapp, keyed by its
 // path relative to this package: owner.go, ../webapp.go, dto/dto.go.
 func webappFiles(t *testing.T) map[string]*ast.File {

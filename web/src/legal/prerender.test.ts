@@ -7,7 +7,7 @@ import { files } from '../prerender'
 
 const template = `<!doctype html>
 <html lang="en" data-theme="wishlist">
-  <head><meta charset="UTF-8" /><!--app-head--></head>
+  <head><meta charset="UTF-8" /><title>wishlist</title><!--app-head--></head>
   <body><div id="app"><!--app-html--></div></body>
 </html>`
 
@@ -38,6 +38,20 @@ describe('prerender of the legal pages', () => {
       expect(file.content).not.toContain('/terms')
       expect(file.content).not.toContain('/agb')
     }
+  })
+
+  it('gives every page its own title', async () => {
+    const out = await files(template)
+    const titles = out
+      .filter((f) => f.path.endsWith('.html'))
+      .map((f) => /<title>([^<]*)<\/title>/.exec(f.content)?.[1])
+
+    expect(titles.sort()).toEqual([
+      'Datenschutzerklärung | Wishlist',
+      'Impressum | Wishlist',
+      'Imprint | Wishlist',
+      'Privacy policy | Wishlist',
+    ])
   })
 
   it('lists the four pages in the sitemap on one origin', async () => {

@@ -15,7 +15,7 @@ const { locale } = useLanguage()
 </script>
 
 <template>
-  <GovueLegalPage page="privacy" :skip-link="false">
+  <GovueLegalPage page="privacy" back-href="/" :skip-link="false">
     <div v-if="locale === 'de'" class="flex flex-col gap-4 text-text" lang="de">
       <h2 class="text-xl font-semibold">Verantwortlicher</h2>
       <p>
@@ -33,7 +33,19 @@ const { locale } = useLanguage()
         Bei jedem Aufruf schreibt der Server eine Zeile in sein Protokoll. Sie enthält den
         Zeitpunkt, die HTTP-Methode, das Muster der angefragten Route (nicht die vollständige
         Adresse mit ihren Parametern), den Statuscode, die Größe und die Dauer der Antwort sowie die
-        IP-Adresse der Verbindung. Den User-Agent Ihres Browsers protokolliert der Server nicht.
+        IP-Adresse der Verbindung sowie eine zufällig erzeugte Kennung der Anfrage. Den User-Agent
+        Ihres Browsers protokolliert der Server nicht.
+      </p>
+      <p>
+        Für Anfragen an die Programmierschnittstelle unter /api begrenzt der Server die Anzahl der
+        Anfragen je Adresse. Dazu hält er die Adressen der Verbindungen, bis zu 100000 gleichzeitig,
+        nur im Arbeitsspeicher.
+      </p>
+      <p>
+        Wenn Sie /imprint oder /privacy aufrufen, leitet der Server Sie auf die deutsche oder die
+        englische Seite weiter. Dafür liest er die Kopfzeile Accept-Language Ihres Browsers und,
+        falls vorhanden, ein Cookie mit dem Namen govue-language. Diese Website setzt dieses Cookie
+        nicht selbst. Der Server speichert dabei nichts.
       </p>
 
       <h2 class="text-xl font-semibold">Speicher in Ihrem Browser</h2>
@@ -82,8 +94,20 @@ const { locale } = useLanguage()
       <p>
         On every request the server writes one line to its log. It holds the time, the HTTP method,
         the pattern of the requested route (not the full address with its parameters), the status
-        code, the size and the duration of the response, and the IP address of the connection. The
-        server does not log the user agent of your browser.
+        code, the size and the duration of the response, the IP address of the connection and a
+        randomly generated id of the request. The server does not log the user agent of your
+        browser.
+      </p>
+      <p>
+        For requests to the programming interface under /api, the server limits the number of
+        requests per address. For that it keeps the addresses of the connections, up to 100000 at a
+        time, in memory only.
+      </p>
+      <p>
+        When you open /imprint or /privacy, the server redirects you to the German or the English
+        page. For that it reads the Accept-Language header of your browser and, if present, a cookie
+        named govue-language. This website does not set that cookie itself. The server stores
+        nothing in doing so.
       </p>
 
       <h2 class="text-xl font-semibold">Storage in your browser</h2>

@@ -70,6 +70,14 @@ describe('legal pages', () => {
     expect(text).toMatch(/IP/)
   })
 
+  it.each(paths)('has a back link to the start page that exists, on %s', async (path) => {
+    await renderApp(fakeApi(), path)
+    const main = within(await screen.findByRole('main'))
+    const back = main.getAllByRole('link')[0]
+
+    expect(back).toHaveAttribute('href', '/')
+  })
+
   it('notes in English that the German text is binding, and not in German', async () => {
     await renderApp(fakeApi(), '/en/privacy')
     expect(await screen.findByText(/German text is the legally binding one/)).toBeVisible()

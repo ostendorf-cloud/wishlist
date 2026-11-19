@@ -106,6 +106,14 @@ assert_status "/" "200"
 # 301 redirect; that is correct, standard net/http behaviour, not a bug.
 assert_status "/index.html" "301"
 
+# The legal pages: the prerendered files from the build, the govue redirects,
+# and the sitemap. /de/ is no page of this site.
+assert_status "/de/imprint" "200"
+assert_status "/en/privacy" "200"
+assert_status "/impressum" "302"
+assert_status "/sitemap.xml" "200"
+assert_status "/de/" "404"
+
 if [[ $fail -ne 0 ]]; then
   echo "smoke test failed" >&2
   exit 1

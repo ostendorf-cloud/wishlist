@@ -19,7 +19,31 @@ import { createAppRouter } from './router'
 // The state main.ts starts, so the header renders as the browser's first paint.
 useTheme({ theme: 'wishlist' })
 
-export function files(template: string): Promise<PrerenderFile[]> {
+// The title of each page (WCAG 2.4.2). localizedFiles takes one template for
+// every page, so the template's <title> is replaced in its output.
+const titles: Record<string, string> = {
+  'de/imprint': 'Impressum | Wishlist',
+  'de/privacy': 'Datenschutzerklärung | Wishlist',
+  'en/imprint': 'Imprint | Wishlist',
+  'en/privacy': 'Privacy policy | Wishlist',
+}
+
+export async function files(template: string): Promise<PrerenderFile[]> {
+  const out = await build(template)
+  return out.map((file) => {
+    const title = titles[file.path.replace(/\/index\.html$/, '')]
+    if (title === undefined) return file
+    if (!/<title>[^<]*<\/title>/.test(file.content)) {
+      throw new Error(`prerender: ${file.path} has no <title> to replace`)
+    }
+    return {
+      ...file,
+      content: file.content.replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`),
+    }
+  })
+}
+
+function build(template: string): Promise<PrerenderFile[]> {
   return localizedFiles(legalRouteTable, {
     origin: ORIGIN,
     template,
