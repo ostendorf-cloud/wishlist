@@ -180,8 +180,10 @@ func webappConfig(logger *slog.Logger, d handlerDeps) (webapp.Config, error) {
 		Auth:         signIn,
 		ClientIPs:    ips,
 		Views:        d.views,
-		Dist:         dist,
-		Logger:       logger,
+		// The same proxies decide whether X-Forwarded-Proto is believed for HSTS.
+		TrustedProxies: d.cfg.TrustedProxies,
+		Dist:           dist,
+		Logger:         logger,
 	}, nil
 }
 
