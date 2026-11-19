@@ -8,7 +8,13 @@ import { GovueLegalPage, useLanguage } from '@ostendorf-cloud/govue'
 // nothing else: the access log of the server (internal/webapp/webapp.go,
 // middleware.AccessLog with the client address, no user agent), the two
 // browser storage entries of govue (useTheme and the language layer), no
-// cookie, no resource from another host, and no sign in yet.
+// resource from another host, and the owner account: login, Argon2id hash,
+// TOTP secret and counter in owner_credentials (migration 0002,
+// internal/store/account.go), the deletion of unconfirmed registrations after
+// 24 hours at the next registration, the cookie __Host-session and its
+// lifetimes (govue session defaults, internal/auth), the CSRF token held in
+// memory by web/src/api/auth.ts, and the rate limiters of internal/auth and
+// internal/webapp. Change a number here when its constant changes.
 // Sections that must grow with later issues are listed in the pull request,
 // never in this text. Both languages say the same.
 const { locale } = useLanguage()
@@ -50,16 +56,61 @@ const { locale } = useLanguage()
 
       <h2 class="text-xl font-semibold">Speicher in Ihrem Browser</h2>
       <p>
-        Diese Website setzt keine Cookies und lädt keine Inhalte von anderen Websites nach. Wenn Sie
-        den Farbmodus oder die Sprache umschalten, speichert die Seite diese Auswahl im lokalen
-        Speicher Ihres Browsers, damit sie beim nächsten Besuch erhalten bleibt. Der Server liest
-        diese Einträge nicht.
+        Diese Website lädt keine Inhalte von anderen Websites nach. Sie setzt ein einziges Cookie,
+        und zwar nur, wenn Sie sich anmelden (siehe unten). Wenn Sie den Farbmodus oder die Sprache
+        umschalten, speichert die Seite diese Auswahl im lokalen Speicher Ihres Browsers, damit sie
+        beim nächsten Besuch erhalten bleibt. Der Server liest diese Einträge nicht.
       </p>
 
-      <h2 class="text-xl font-semibold">Anmeldung und Inhalte</h2>
+      <h2 class="text-xl font-semibold">Konto und Anmeldung</h2>
       <p>
-        Eine Anmeldung ist derzeit nicht möglich. Diese Website speichert deshalb derzeit keine
-        Konten und keine Inhalte von Besuchern.
+        Wer Listen verwalten möchte, kann ein Konto als Eigentümer anlegen, solange die
+        Registrierung geöffnet ist. Sie kann geschlossen sein. Als Anmeldename fragt das Formular
+        nach Ihrer E-Mail-Adresse. Der Server prüft das Format nicht. Das Konto ist durch ein
+        Passwort und durch einen Code aus einer Authenticator-App (TOTP) gesichert. Ohne Konto ist
+        keine Anmeldung möglich.
+      </p>
+      <p>
+        Der Server speichert in der Datenbank: den Anmeldenamen so, wie Sie ihn eingeben, und ein
+        zweites Mal in Kleinbuchstaben, damit eine Adresse nicht zwei Konten ergibt, das Passwort
+        nur als Argon2id-Hash und nie im Klartext, das TOTP-Geheimnis, einen Zähler des zuletzt
+        verwendeten Codes, der die erneute Verwendung eines Codes verhindert, und den Zeitpunkt der
+        Anlage. Dazu kommen eine interne Nummer des Kontos, eine zufällige Kennung und eine
+        Markierung, mit der ein Konto gesperrt werden kann. Die Markierung setzt derzeit nichts. Das
+        TOTP-Geheimnis liegt in der Datenbank unverschlüsselt.
+      </p>
+      <p>
+        Eine Registrierung gilt erst mit dem ersten gültigen Code als bestätigt. Bei der nächsten
+        Registrierung löscht der Server automatisch Konten, die nie bestätigt wurden, älter als 24
+        Stunden sind und zu denen keine Liste gehört. Bis dahin kann ein solches Konto länger als 24
+        Stunden bestehen.
+      </p>
+      <p>
+        Wenn Sie sich anmelden oder Ihre Registrierung bestätigen, setzt der Server das Cookie
+        __Host-session. Es ist technisch notwendig, damit Sie angemeldet bleiben. Es enthält nur
+        eine Kennung, ist für Skripte der Seite nicht lesbar (HttpOnly), wird nur über HTTPS
+        gesendet (Secure), gilt nur für diese Domain und hat SameSite Lax. Es hat kein Ablaufdatum
+        und Ihr Browser löscht es beim Schließen. Der Server beendet die Sitzung nach 2 Stunden ohne
+        Nutzung, spätestens nach 12 Stunden. Die Sitzung mit der Kennung, der Kontonummer und dem
+        Anmeldenamen liegt nur im Arbeitsspeicher des Servers. Beim Abmelden entfernt der Server sie
+        und das Cookie. Ein Neustart des Servers beendet alle Sitzungen.
+      </p>
+      <p>
+        Die Seite hält ein CSRF-Token, das der Server für Ihre Sitzung erzeugt, nur im
+        Arbeitsspeicher. Es wird nicht im Browser gespeichert.
+      </p>
+      <p>
+        Für die Routen zum Registrieren, Bestätigen und Anmelden begrenzt der Server die Versuche
+        mehrfach: je Adresse (5 pro Minute), je Anmeldename und Adresse (10 in 15 Minuten) und je
+        Anmeldename allein (100 pro Stunde). Er hält dafür die Adressen der Verbindungen und die
+        Anmeldenamen, diese nur als SHA-256-Wert, bis zu 100000 Einträge je Zähler, nur im
+        Arbeitsspeicher. Ein Eintrag wird gelöscht, sobald sein Zähler wieder voll aufgefüllt ist
+        und der Server aufräumt, was mindestens einmal pro Minute geschieht. Das dauert also
+        höchstens etwa eine Minute, 15 Minuten oder eine Stunde, je nach Zähler.
+      </p>
+      <p>
+        Wer kein Konto hat, gibt auf dieser Website keine Inhalte ein, und es werden keine von ihm
+        gespeichert.
       </p>
 
       <h2 class="text-xl font-semibold">Ihre Rechte</h2>
@@ -112,15 +163,57 @@ const { locale } = useLanguage()
 
       <h2 class="text-xl font-semibold">Storage in your browser</h2>
       <p>
-        This website sets no cookies and loads no content from other websites. When you switch the
-        color mode or the language, the page keeps that choice in the local storage of your browser,
-        so it is still there on your next visit. The server does not read these entries.
+        This website loads no content from other websites. It sets a single cookie, and only when
+        you sign in (see below). When you switch the color mode or the language, the page keeps that
+        choice in the local storage of your browser, so it is still there on your next visit. The
+        server does not read these entries.
       </p>
 
-      <h2 class="text-xl font-semibold">Sign in and content</h2>
+      <h2 class="text-xl font-semibold">Account and sign in</h2>
       <p>
-        Signing in is not possible at the moment. For that reason this website currently stores no
-        accounts and no content of visitors.
+        Anyone who wants to manage lists can create an owner account while registration is open.
+        Registration can be closed. As the login, the form asks for your email address. The server
+        does not check the format. The account is secured by a password and by a code from an
+        authenticator app (TOTP). Without an account, signing in is not possible.
+      </p>
+      <p>
+        The server stores in the database: the login as you enter it and a second time in lower
+        case, so that one address cannot become two accounts, the password only as an Argon2id hash
+        and never in plain text, the TOTP secret, a counter of the code used last, which prevents a
+        code from being used again, and the time of creation. It also stores an internal number of
+        the account, a random identifier and a flag that can block an account. Nothing sets that
+        flag at the moment. The TOTP secret is stored unencrypted in the database.
+      </p>
+      <p>
+        A registration counts as confirmed with the first valid code. At the next registration, the
+        server automatically deletes accounts that were never confirmed, are older than 24 hours and
+        have no list. Until then, such an account can exist for longer than 24 hours.
+      </p>
+      <p>
+        When you sign in or confirm your registration, the server sets the cookie __Host-session. It
+        is strictly necessary to keep you signed in. It holds only an identifier, cannot be read by
+        scripts of the page (HttpOnly), is sent over HTTPS only (Secure), applies to this domain
+        only and has SameSite Lax. It has no expiry date and your browser deletes it when it closes.
+        The server ends the session after 2 hours without use and after 12 hours at the latest. The
+        session with the identifier, the account number and the login is held in the memory of the
+        server only. At sign out the server removes it and the cookie. A restart of the server ends
+        all sessions.
+      </p>
+      <p>
+        The page holds a CSRF token that the server creates for your session in memory only. It is
+        not stored in the browser.
+      </p>
+      <p>
+        For the routes to register, confirm and sign in, the server limits attempts in several ways:
+        per address (5 per minute), per login and address (10 per 15 minutes) and per login alone
+        (100 per hour). For that it keeps the addresses of the connections and the logins, the
+        latter only as a SHA-256 value, up to 100000 entries per counter, in memory only. An entry
+        is deleted once its counter has refilled completely and the server tidies up, which happens
+        at least once per minute. That takes about one minute, 15 minutes or one hour at most,
+        depending on the counter.
+      </p>
+      <p>
+        Anyone without an account enters no content on this website, and none is stored from them.
       </p>
 
       <h2 class="text-xl font-semibold">Your rights</h2>
