@@ -1,0 +1,72 @@
+suite: own accounts and the in-process session store
+templates:
+  - templates/deployment.yaml
+tests:
+  - it: keeps one replica, because sessions live in the memory of the process
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: fails the render with more than one replica
+    set:
+      replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: replicaCount cannot be above 1
+
+  - it: allows turning the workload off
+    set:
+      replicaCount: 0
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 0
+
+  - it: leaves registration open by default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REGISTRATION_OPEN
+            value: "true"
+
+  - it: closes registration by value
+    set:
+      auth:
+        registrationOpen: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REGISTRATION_OPEN
+            value: "false"
+
+  - it: trusts no proxy by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: ""
+
+  - it: passes the trusted proxies as one list
+    set:
+      auth:
+        trustedProxies:
+          - 10.42.0.0/16
+          - 192.0.2.1
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: 10.42.0.0/16,192.0.2.1
+
+  - it: never turns on the plain http session cookie
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: WISHLIST_ALLOW_PLAIN_HTTP
+            value: "true"

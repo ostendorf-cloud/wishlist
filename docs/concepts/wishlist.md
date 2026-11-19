@@ -16,9 +16,13 @@ The rewrite of `old_wishlist` as a Go API behind a Vue SPA on govue.
 
 ## Goals
 
-- The feature set of `old_wishlist` works unchanged in meaning: owner login through OIDC, lists,
-  wishes, images in an object store, share tokens, guests reserving and releasing, comments, two
+- The feature set of `old_wishlist` works unchanged in meaning: owner sign in, lists, wishes,
+  images in an object store, share tokens, guests reserving and releasing, comments, two
   languages, link previews when adding a wish.
+- The owner signs in with an own account first: an email address, a password and TOTP, through
+  govue's `account` package over this service's own tables, with a cookie session and a CSRF
+  token. OIDC comes later as a second way in to the same owner row. Passkeys are a later
+  second factor next to TOTP, so no account assumes exactly one.
 - A reservation stays blind to the owner, and that guarantee has its own test in this repository,
   not only a review, the same way `old_wishlist`'s `blind_test.go` and `blindness_test.go` did.
 - A guest reaches a shared list and can reserve, release and comment without creating an account or
@@ -30,8 +34,9 @@ The rewrite of `old_wishlist` as a Go API behind a Vue SPA on govue.
 
 ## Non goals
 
-- A new database, object store or identity provider. PostgreSQL through pgx and OIDC stay as they
-  are.
+- A new database or object store. PostgreSQL through pgx stays as it is. The service runs no
+  identity provider of its own: the owner accounts are local credentials, and OIDC, when it
+  comes, is a second way in to the same owner row.
 - Any capability `old_wishlist` does not have, including any view that gives the owner reservation
   data for support or debugging.
 - The exact JSON shape of every endpoint; that is implementation, not this concept.
@@ -40,7 +45,8 @@ The rewrite of `old_wishlist` as a Go API behind a Vue SPA on govue.
 ## Approach
 
 - One Go process serves two HTTP surfaces on the public listener, as `old_wishlist` served two
-  route groups: an owner API behind govue's session, OIDC and CSRF packages, and a guest API
+  route groups: an owner API behind govue's account, session and CSRF packages (own accounts,
+  OIDC later as a second way in), and a guest API
   reached only by share token, never by login. Health, readiness and metrics stay on govue's
   admin listener, as the scaffold already has them.
 - The store layer keeps `old_wishlist`'s split: the guest-only queries, including reservations,
@@ -74,6 +80,11 @@ The rewrite of `old_wishlist` as a Go API behind a Vue SPA on govue.
   either.
 - An account for every guest, by magic link or password: dropped, `old_wishlist` works without one,
   and an account adds a login surface to a feature, reserving a gift, that works better anonymous.
+
+- The owner's account is the owner row. The session keys on the row id, never on an email
+  address or a provider subject, so a second way in (OIDC, passkeys) maps to the same id.
+  Sessions live in the memory of one process until a shared session store exists, which is why
+  the chart allows one replica.
 
 ## Open questions
 

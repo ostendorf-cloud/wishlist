@@ -20,12 +20,13 @@ services:
       DB_PASSWORD: "dev-password-not-real"
       # The compose network is local and the server has no certificate.
       DB_SSLMODE: "disable"
-      # Local development only: until the owner sign in exists (issue 4), this
-      # signs every request in as one account without a password, so the SPA
-      # and the owner API can be tried. Safe here because the ports below are
-      # published on 127.0.0.1 only. The Helm chart never sets either variable.
-      WISHLIST_DEV_OWNER: "dev"
-      WISHLIST_DEV_OWNER_ANY_LISTENER: "true"
+      # Local development only: the session cookie is sent over plain http, so
+      # the stack works at http://127.0.0.1:8080 without a certificate. Safe
+      # here because the ports below are published on 127.0.0.1 only. The Helm
+      # chart never sets either variable. Register an account in the SPA and
+      # add the TOTP secret it shows to an authenticator app.
+      WISHLIST_ALLOW_PLAIN_HTTP: "true"
+      WISHLIST_ALLOW_PLAIN_HTTP_ANY_LISTENER: "true"
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:8081:8081"

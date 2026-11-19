@@ -16,6 +16,9 @@ The global baseline already applies here and is not repeated below.
   `migrations/` applied at startup, `owner.go` (`OwnerStore`) and `guest.go` (`GuestStore`).
   See "The store boundary".
 - `internal/dbtest` gives a test its own database on a real PostgreSQL, see "Store tests".
+- `internal/accounts` adapts the credentials in `internal/store` to govue's `account.Store`.
+  `internal/auth` is the owner's sign in: account handlers, session, CSRF token and sign in
+  limits. See "Own accounts".
 - `internal/webapp` builds the public handler (govue's middleware chain, the SPA).
   `internal/webapp/owner` is the owner API, `owner/dto` its request and response types,
   `owner/ownertest` an in memory store for handler tests. See "The owner API".
@@ -54,7 +57,9 @@ half of a govue release and not the other half, silently. `task check:govue-vers
 
 The store has two sides that share only the pool. `Core` owns `Open`, `Close`, `Ping` and
 `Migrate`, and hands out `OwnerStore` (`Owners()`, all methods in `owner.go`) and
-`GuestStore` (`Guests()`, all methods in `guest.go`). Only `guest.go` may name the
+`GuestStore` (`Guests()`, all methods in `guest.go`). A third, small type, `AccountStore`
+(`Accounts()`, `account.go`), holds the owners' credentials beside the owner row and never
+touches lists, wishes or the guest side. Only `guest.go` may name the
 `reservations` table, and the comments the guests write are there too. A handler for the
 owner must be given an `OwnerStore` and nothing else: only then does the compiler stop it
 from calling a guest method. That is true once the wiring passes an `OwnerStore`. The handler
@@ -170,26 +175,65 @@ serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on 
 owner id. The id is an `int64`, like the store's. Handlers answer 401 when it is not ok and
 never read an owner id from the body, the query or the path.
 
-The owner's sign in is issue 4 and waits for a govue release. Until then
-`cmd/wishlist/resolver.go` (`resolveOwner`) returns a resolver that always answers not ok, so
-every owner endpoint answers 401. Issue 4 plugs in at two places, both in `cmd/wishlist`:
+`resolveOwner` in `cmd/wishlist/resolver.go` returns `auth.Auth.OwnerID`: the owners row id of
+the session the request carries, and nobody without one. There is no other way to be an owner:
+the development owner of the earlier milestone (`WISHLIST_DEV_OWNER`) is gone, because a
+sign in without a password cannot coexist with real sessions. To try the SPA: `docker compose
+up --build`, open `http://127.0.0.1:8080`, register and add the TOTP secret to an
+authenticator app.
 
-1. `resolveOwner` returns a resolver that reads govue's session and maps it to an owner id
-   (`UpsertOwner` by subject).
-2. `buildHandler` in `main.go` passes the matching `csrf.Expected` as
-   `webapp.Config.CSRFExpected` (`csrf.Token(key, session.ID)`), and the page renders the token
-   into `<meta name="csrf-token">`, which `web/src/api/owner.ts` already reads. Until then only
-   the protector's origin check applies (Sec-Fetch-Site and Origin), which refuses cross site
-   writes.
+### Own accounts
 
-Development owner: with `WISHLIST_DEV_OWNER=<name>` the resolver signs every request in as one
-account, created on first use. `config.Load` refuses it unless `ADDR` is a loopback address, or
-`WISHLIST_DEV_OWNER_ANY_LISTENER=true` says the port is reachable on loopback by other means.
-`docker-compose.yaml` sets both: the container listens on every interface and the port is
-published on `127.0.0.1` only. The Helm chart passes neither and has no free form `env`, so a
-deployment cannot turn it on by accident. Remove the development owner when issue 4 lands, or
-keep it for compose only. To try the SPA: `docker compose up --build`, open
-`http://127.0.0.1:8080`.
+An owner signs in with an email address, a password and a TOTP code. OIDC is a later second way
+in: govue's `oidc` stays behind the same `account.Identity` shape (the owners row id) and is not
+wired. Passkeys and recovery are not built either. The account design assumes no single second
+factor: credentials are rows beside the owner, and a later factor adds a table that points at
+the same owners row.
+
+- `internal/store/account.go` (`AccountStore`, `Core.Accounts()`) and migration `0002` hold the
+  credentials in `owner_credentials`, keyed by the owners row. Every guard is one conditional
+  statement (counter only forward, confirm only for the stored secret, compare and set of the
+  hash). `internal/accounts` adapts that to govue's `account.Store` and runs the conformance
+  suite `accounttest.Run` against a real PostgreSQL (`TestStoreConformance`: skips locally
+  without `WISHLIST_TEST_DATABASE_URL`, fails in CI without it).
+- The account id is the owners row id as a decimal string, never the login and never a
+  provider subject. The session subject is `local:<id>`, so a later OIDC subject cannot equal
+  it. A registration creates an owners row with a subject `local:<uuid>` and the login as
+  username and email.
+- The TOTP secret is stored in the clear in `owner_credentials.totp_secret`. govue allows
+  encryption at rest and does not require it. See the decisions in the pull request of
+  issue 4.
+- `internal/auth` wires govue's `account`, `session` and `csrf`. Routes under
+  `/api/v1/account`: `POST signup`, `confirm`, `login`, `logout` and `GET session`. `session`
+  is the only route of its own: it answers who is signed in, the CSRF token of that session and
+  whether registration is open, always with 200 and `Cache-Control: no-store`. The SPA keeps the
+  token in memory, never in storage.
+- Cookie: `__Host-session`, Secure, HttpOnly, SameSite Lax, Path `/`. 2 hours idle, 12 hours
+  absolute (govue defaults). `WISHLIST_ALLOW_PLAIN_HTTP` drops Secure and the prefix for local
+  development and is refused unless `ADDR` is loopback, or `WISHLIST_ALLOW_PLAIN_HTTP_ANY_LISTENER`
+  says the port is published on loopback only (compose does). The chart sets neither.
+- Middleware order of a route: rate limit, CSRF protector, session. A password route adds the
+  stricter limit of `auth` (per address, 5 per minute) after the general one, and signup, login
+  and confirm also take a token from a bucket per login (10 per 15 minutes, case folded, shared
+  by the three). A refused guess costs no password derivation.
+- `webapp.Config.CSRFExpected` is the session's token (`csrf.Token(key, session.ID)`). Every
+  unsafe request of a signed in session needs it. A request without a session needs none, and
+  the protector's origin check still applies. The CSRF key is random per process, which is
+  enough because the sessions are in this process only.
+- `REGISTRATION_OPEN` (default true) closes signup: the route stays, answers 403 `signup is not
+  available`, and creates nothing.
+- Session store: govue's `session.MemoryStore`, in the memory of the process. A restart signs
+  everybody out. A second replica would not know the first one's sessions, so the chart fails
+  the render for `replicaCount` above 1 (`templates/deployment.yaml`, tested in
+  `charts/wishlist/tests/accounts_test.yaml`). Scaling out needs a shared `session.Store` first.
+- `TRUSTED_PROXIES` (chart: `auth.trustedProxies`) names the proxies whose `X-Forwarded-For` is
+  believed. Empty trusts nothing, and then all callers behind an ingress share one limit bucket.
+  Set it before the first deployment.
+- Tests: `cmd/wishlist/signin_test.go` runs the whole flow through the real handler (register,
+  confirm, owner request, logout, stolen cookie, CSRF, limits, closed registration) over an in
+  memory credentials backend, and the same flow over PostgreSQL in CI. `probe` is the shared
+  check, and `TestTheSecurityChecksNoticeAWeakenedWiring` weakens CSRF, the session read, the
+  resolver and the registration setting and requires `probe` to notice.
 
 ### Refusals
 
@@ -205,8 +249,9 @@ Everything else is a 404: JSON under `/api/`, plain text elsewhere. `/metrics`, 
 `/readyz` are on the admin listener only, and `scripts/smoke-test-image.sh` pins that. A new
 top level route in the SPA needs its first segment in `spaRoutes`.
 
-The rate limiter keys by connection address. Behind an ingress everyone shares one bucket, so
-it needs a trusted proxy setting before the first deployment.
+The rate limiter keys by the client address from `internal/auth`'s resolver: the connection
+address unless `TRUSTED_PROXIES` names the proxy in front. Behind an ingress without it everyone
+shares one bucket, so set it before the first deployment.
 
 Left out on purpose: images (the keys that delete returns are counted in a debug log line, the
 objects are not deleted: image milestone), share tokens, guest access, translations, link
@@ -272,8 +317,7 @@ embedded SPA shell and the Go entry point serving it, with health, readiness and
 govue's admin listener, plus the PostgreSQL schema and its store, and the owner's API and SPA
 on top of it. Left out, tracked as later milestones:
 
-- owner login through OIDC (issue 4; the owner API takes its owner from a resolver, see "The
-  owner API")
+- owner login through OIDC as a second way in (own accounts are done, see "Own accounts")
 - images, kept in an object store
 - the HTTP API for share tokens, reserving and comments
 - two languages

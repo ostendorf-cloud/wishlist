@@ -1,9 +1,10 @@
 // Copyright 2026 Simon Ostendorf
 // SPDX-License-Identifier: Apache-2.0
 
-import { createClient, type ApiClient } from '@ostendorf-cloud/govue'
+import type { ApiClient } from '@ostendorf-cloud/govue'
 import { inject, type InjectionKey } from 'vue'
 
+import { sharedAuth } from './auth'
 import type {
   Direction,
   List,
@@ -35,12 +36,6 @@ export const ownerApiKey: InjectionKey<OwnerApi> = Symbol('owner-api')
 
 const base = '/owner'
 
-/** The page carries the CSRF token once the sign in renders it into a meta tag. */
-export function readCsrfToken(): string | undefined {
-  const meta = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')
-  return meta?.content || undefined
-}
-
 export function createOwnerApi(client: ApiClient): OwnerApi {
   const query = (archived?: boolean) => (archived ? { archived: true } : undefined)
   return {
@@ -60,9 +55,9 @@ export function createOwnerApi(client: ApiClient): OwnerApi {
   }
 }
 
-/** The client of the running app: same origin, the session cookie, the token. */
+/** The client of the running app: same origin, the session cookie, the session's token. */
 export function createDefaultOwnerApi(): OwnerApi {
-  return createOwnerApi(createClient({ baseUrl: '/api/v1', csrfToken: readCsrfToken }))
+  return createOwnerApi(sharedAuth().client)
 }
 
 let shared: OwnerApi | undefined

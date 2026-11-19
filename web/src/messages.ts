@@ -21,6 +21,23 @@ export const messages = {
     },
   },
 
+  auth: {
+    loginTitle: 'Sign in',
+    loginLead: 'Use your email address, your password and the code from your authenticator app.',
+    signupLink: 'Create an account',
+    signupTitle: 'Create an account',
+    signupLead: 'You need an authenticator app for the second step.',
+    loginLink: 'I already have an account',
+    enrolTitle: 'Set up your authenticator',
+    enrolLead:
+      'Add this secret to your authenticator app, then enter the password and the first code to finish. The secret is shown once.',
+    signupClosedTitle: 'Registration is closed',
+    signupClosed: 'New accounts cannot be created on this site right now.',
+    signOut: 'Sign out',
+    signOutFailed: 'You could not be signed out',
+    signOutFailedText: 'Please try again.',
+  },
+
   common: {
     save: 'Save',
     saving: 'Saving',

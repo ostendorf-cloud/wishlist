@@ -4,7 +4,18 @@
   "type": "object",
   "required": ["image", "service"],
   "properties": {
-    "replicaCount": { "type": "integer", "minimum": 0 },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "At most 1, enforced by a template fail guard and not by maximum, because helm-unittest cannot assert a schema failure: sessions are kept in the memory of the process. Scaling out needs a shared session store first."
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "registrationOpen": { "type": "boolean" },
+        "trustedProxies": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "image": {
       "type": "object",
       "required": ["repository"],

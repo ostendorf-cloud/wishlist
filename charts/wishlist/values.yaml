@@ -2,7 +2,22 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+# At most 1. Sessions are kept in the memory of the process (govue's
+# session.MemoryStore): a second replica would not know the sessions of the first,
+# and an owner would be signed out at random. Scaling out needs a shared session
+# store in the service first. templates/deployment.yaml and values.schema.json both
+# refuse a value above 1. 0 turns the workload off.
 replicaCount: 1
+
+# Own accounts: the owner signs in with an email address, a password and TOTP.
+auth:
+  # Anybody can create an account while this is true. Set false to close it.
+  registrationOpen: true
+  # CIDR ranges or addresses of the proxies in front of the pod, whose
+  # X-Forwarded-For is believed. Empty trusts nothing: every sign in limit then
+  # keys by the connection address, which behind an ingress is the ingress, so
+  # all callers share one bucket. Set the ingress controller's pod range.
+  trustedProxies: []
 
 image:
   repository: ghcr.io/ostendorf-cloud/wishlist
