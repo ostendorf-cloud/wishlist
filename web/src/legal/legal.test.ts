@@ -65,7 +65,7 @@ describe('legal pages', () => {
     await renderApp(fakeApi(), path)
     const text = (await screen.findByRole('main')).textContent ?? ''
 
-    expect(text).not.toMatch(/Umami|analytics|Analyse|Reichweite|guest|Gäste/i)
+    expect(text).not.toMatch(/analytics|Reichweite|guest|Gäste/i)
     expect(text).toMatch(/info@my-wishes\.de/)
     expect(text).toMatch(/IP/)
   })
@@ -116,6 +116,28 @@ describe('legal pages', () => {
     ]) {
       expect(text).toMatch(new RegExp(word))
     }
+  })
+
+  it.each([
+    ['/de/privacy', 'Besucherstatistik mit Umami', /Routenmuster/, /Do Not Track/, /\/24/, /\/48/],
+    [
+      '/en/privacy',
+      'Visitor statistics with Umami',
+      /route pattern/,
+      /Do Not Track/,
+      /\/24/,
+      /\/48/,
+    ],
+  ])('states what the page view counting reports on %s', async (path, heading, ...fragments) => {
+    await renderApp(fakeApi(), path)
+    const element = await screen.findByRole('main')
+
+    expect(within(element).getByRole('heading', { name: heading })).toBeVisible()
+    const text = element.textContent ?? ''
+    for (const fragment of fragments) {
+      expect(text).toMatch(fragment)
+    }
+    expect(text).toMatch(/Global Privacy Control/)
   })
 
   it.each(paths)('has a back link to the start page that exists, on %s', async (path) => {

@@ -119,7 +119,7 @@ See `values.yaml` for the full, commented list. The ones most deployments touch:
 | `image.tag` | Image tag | `.Chart.AppVersion` |
 | `replicaCount` | Pod replicas. At most `1`: sessions live in the memory of the process, a higher value fails the render. Scaling out needs a shared session store in the service first. | `1` |
 | `auth.registrationOpen` | Anybody can create an owner account. `true` opens registration (`REGISTRATION_OPEN`). Closed by default, like the binary. Only docker-compose sets it open, for local development. Accounts whose TOTP secret is not confirmed are deleted at the next signup after 24 hours | `false` |
-| `auth.trustedProxies` | Proxy addresses or CIDR ranges whose `X-Forwarded-For` is believed (`TRUSTED_PROXIES`). Required when `ingress.enabled` or `httpRoute.enabled` is true: the render fails with it empty | `[]` |
+| `auth.trustedProxies` | Proxy addresses or CIDR ranges whose `X-Forwarded-For` is believed (`TRUSTED_PROXIES`). Required when `ingress.enabled` or `httpRoute.enabled` is true: the render fails with it empty. Without the ingress range no page view is counted either | `[]` |
 | `service.port` | Public Service and container port, the only one the `Ingress`/`HTTPRoute` ever route to | `8080` |
 | `service.adminPort` | govue's admin listener: health, readiness and metrics, in-cluster only | `8081` |
 | `ingress.enabled` | Create an `Ingress`. Mutually exclusive with `httpRoute.enabled`; see "External routing" above. | `false` |
@@ -130,6 +130,9 @@ See `values.yaml` for the full, commented list. The ones most deployments touch:
 | `httpRoute.parentRefs.name` | Name of the `Gateway` to attach to. Required when `httpRoute.enabled` is true | `""` |
 | `httpRoute.parentRefs.namespace` | Namespace the `Gateway` lives in. Required when `httpRoute.enabled` is true | `""` |
 | `resources` | Pod resource requests/limits | see `values.yaml` |
+| `config.umami.url` | `UMAMI_URL`: Umami base URL; counting is on only with the website id too. Not a secret | `""` |
+| `config.umami.websiteId` | `UMAMI_WEBSITE_ID`: Umami website id, a UUID. Not a secret | `""` |
+| `config.siteUrl` | `SITE_URL`: public origin; its host is sent to Umami. Empty keeps `https://my-wishes.de` | `""` |
 
 ## Upgrading
 

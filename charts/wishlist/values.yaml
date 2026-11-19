@@ -21,8 +21,22 @@ auth:
   # X-Forwarded-For is believed. Required when ingress.enabled or
   # httpRoute.enabled is true: the render fails otherwise, because every sign
   # in limit would key by the proxy's address and all callers would share one
-  # bucket. Set the ingress controller's or gateway's pod range.
+  # bucket. Set the ingress controller's or gateway's pod range. Without it no
+  # page view is counted either, because the proxy is a private address.
   trustedProxies: []
+
+config:
+  # Public origin of the site (SITE_URL). Its bare host is what page view
+  # counting sends to Umami as the hostname. Empty keeps the binary's default,
+  # https://my-wishes.de.
+  siteUrl: ""
+  # Page view counting through Umami, reported from the server. Off unless
+  # both url and websiteId are set; one alone fails the start. Neither is a
+  # secret: the website id is a public identifier and the url holds no
+  # credential (govue refuses one in it).
+  umami:
+    url: ""
+    websiteId: ""
 
 image:
   repository: ghcr.io/ostendorf-cloud/wishlist

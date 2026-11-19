@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ostendorf-cloud/govue/health"
+	"github.com/ostendorf-cloud/govue/metrics"
 
 	"github.com/ostendorf-cloud/wishlist/internal/accounts"
 	"github.com/ostendorf-cloud/wishlist/internal/config"
@@ -58,7 +59,7 @@ func TestEmbeddedDistBuildsAWorkingHandler(t *testing.T) {
 // port: a request straight through the handler is enough to prove the
 // routes exist and answer.
 func TestAdminHandlerAnswersHealthAndMetrics(t *testing.T) {
-	admin := buildAdminHandler(health.New())
+	admin := buildAdminHandler(health.New(), metrics.Handler(metrics.NewRegistry()))
 
 	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
 		rec := httptest.NewRecorder()

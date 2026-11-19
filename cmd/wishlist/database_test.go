@@ -18,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/ostendorf-cloud/govue/health"
+	"github.com/ostendorf-cloud/govue/metrics"
 
 	"github.com/ostendorf-cloud/wishlist/internal/dbtest"
 )
@@ -49,7 +50,7 @@ func readyz(t *testing.T, checks *health.Registry) (int, string) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil)
-	buildAdminHandler(checks).ServeHTTP(rec, req)
+	buildAdminHandler(checks, metrics.Handler(metrics.NewRegistry())).ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
 }
 
@@ -92,7 +93,7 @@ func TestReadinessIsUnreadyWhileTheDatabaseIsUnreachable(t *testing.T) {
 	// Liveness must not depend on the database.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil)
-	buildAdminHandler(checks).ServeHTTP(rec, req)
+	buildAdminHandler(checks, metrics.Handler(metrics.NewRegistry())).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("GET /healthz = %d, want 200 while the database is unreachable", rec.Code)
 	}

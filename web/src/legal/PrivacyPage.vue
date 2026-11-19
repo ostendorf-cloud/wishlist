@@ -8,7 +8,10 @@ import { GovueLegalPage, useLanguage } from '@ostendorf-cloud/govue'
 // nothing else: the access log of the server (internal/webapp/webapp.go,
 // middleware.AccessLog with the client address, no user agent), the two
 // browser storage entries of govue (useTheme and the language layer), no
-// resource from another host, and the owner account: login, Argon2id hash,
+// resource from another host, the page view counting of govue's analytics
+// package (internal/webapp, see AGENTS.md "Page view counting"), worded as
+// ostendorf.tech words it, whose operator statements (who runs Umami, how long
+// it keeps the data) are not made here, and the owner account: login, Argon2id hash,
 // TOTP secret and counter in owner_credentials (migration 0002,
 // internal/store/account.go), the deletion of unconfirmed registrations after
 // 24 hours at the next registration, the cookie __Host-session and its
@@ -52,6 +55,45 @@ const { locale } = useLanguage()
         englische Seite weiter. Dafür liest er die Kopfzeile Accept-Language Ihres Browsers und,
         falls vorhanden, ein Cookie mit dem Namen govue-language. Diese Website setzt dieses Cookie
         nicht selbst. Der Server speichert dabei nichts.
+      </p>
+
+      <h2 id="umami" class="text-xl font-semibold">Besucherstatistik mit Umami</h2>
+      <p>
+        Wenn die Besucherstatistik eingeschaltet ist, melden wir die Aufrufe von Seiten an die
+        Open-Source-Software Umami. Umami läuft nicht in Ihrem Browser: Es wird kein Skript geladen,
+        kein Cookie gesetzt und nichts auf Ihrem Endgerät gespeichert oder ausgelesen. Stattdessen
+        meldet unser Webserver jeden Aufruf einer Seite an Umami, mit den Angaben, die Ihr Browser
+        beim Aufruf ohnehin an uns übermittelt:
+      </p>
+      <ul class="list-disc pl-6">
+        <li>
+          aufgerufene Seite als Routenmuster der Website, nicht als angefragter Pfad und ohne
+          angehängte Parameter (ohne Seitentitel); Kennungen aus der Adresse werden nicht gemeldet
+        </li>
+        <li>
+          Herkunft der Referrer URL (Protokoll und Domain, ohne Pfad und Parameter), sofern Sie von
+          einer anderen Website kommen und Ihr Browser sie übermittelt
+        </li>
+        <li>bevorzugte Sprache Ihres Browsers</li>
+        <li>Browsertyp und Browserversion sowie verwendetes Betriebssystem (User-Agent)</li>
+        <li>
+          IP-Adresse, gekürzt auf das Netz /24 (IPv4) bzw. /48 (IPv6); die vollständige IP-Adresse
+          erhält Umami nicht
+        </li>
+      </ul>
+      <p>
+        Aus der gekürzten IP-Adresse ermittelt Umami Land, Region und Stadt. Aus gekürzter
+        IP-Adresse, User-Agent, einem geheimen Schlüssel und dem laufenden Monat bildet Umami eine
+        pseudonyme Kennung, um die Seitenaufrufe eines Besuchs zusammenzufassen; die Kennung
+        wechselt deshalb jeden Monat. Die IP-Adresse und den vollständigen User-Agent speichert
+        Umami nicht, sondern nur die daraus abgeleiteten Angaben (Land, Region, Stadt, Browser,
+        Betriebssystem) zusammen mit der pseudonymen Kennung. Eine Zusammenführung mit anderen Daten
+        oder eine Identifizierung einzelner Besucher findet nicht statt.
+      </p>
+      <p>
+        Nicht erfasst werden Aufrufe, bei denen Ihr Browser das Signal „Do Not Track“ (DNT) oder
+        „Global Privacy Control“ (GPC) sendet, sowie Aufrufe, die Ihr Browser nur vorab lädt. Die
+        Programmierschnittstelle unter /api und Dateien wie Skripte und Bilder werden nicht gezählt.
       </p>
 
       <h2 class="text-xl font-semibold">Speicher in Ihrem Browser</h2>
@@ -178,6 +220,46 @@ const { locale } = useLanguage()
         page. For that it reads the Accept-Language header of your browser and, if present, a cookie
         named govue-language. This website does not set that cookie itself. The server stores
         nothing in doing so.
+      </p>
+
+      <h2 id="umami" class="text-xl font-semibold">Visitor statistics with Umami</h2>
+      <p>
+        When visitor statistics are switched on, we report page views to the open-source software
+        Umami. Umami does not run in your browser: no script is loaded, no cookie is set, and
+        nothing is stored on or read from your device. Instead, our web server reports every page
+        request to Umami, using the information your browser transmits to us in any case when making
+        the request:
+      </p>
+      <ul class="list-disc pl-6">
+        <li>
+          the page requested, as the website's route pattern rather than the requested path and
+          without any attached parameters (without the page title); identifiers in the address are
+          not reported
+        </li>
+        <li>
+          the origin of the referrer URL (protocol and domain, without path and parameters), where
+          you come from another website and your browser transmits it
+        </li>
+        <li>your browser's preferred language</li>
+        <li>browser type and version, and operating system used (user agent)</li>
+        <li>
+          IP address, shortened to the /24 network (IPv4) or the /48 network (IPv6); Umami does not
+          receive the full IP address
+        </li>
+      </ul>
+      <p>
+        Umami derives the country, region and city from the shortened IP address. From the shortened
+        IP address, the user agent, a secret key and the current month, Umami forms a pseudonymous
+        identifier to group together the page views of one visit; the identifier therefore changes
+        every month. Umami does not store the IP address or the full user agent, only the
+        information derived from them (country, region, city, browser, operating system) together
+        with the pseudonymous identifier. No merging with other data, and no identification of
+        individual visitors, takes place.
+      </p>
+      <p>
+        Requests where your browser sends the "Do Not Track" (DNT) or "Global Privacy Control" (GPC)
+        signal are not recorded, nor are requests your browser merely preloads. The programming
+        interface under /api and files such as scripts and images are not counted.
       </p>
 
       <h2 class="text-xl font-semibold">Storage in your browser</h2>
