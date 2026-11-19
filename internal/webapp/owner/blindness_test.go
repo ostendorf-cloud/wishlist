@@ -349,7 +349,9 @@ func TestEveryRegisteredPatternComesFromTheRouteTable(t *testing.T) {
 // library and govue's language package by its own boundary_test.go.
 // middleware.Chain is govue's wrapper around the finished mux, the outer
 // chain: it takes the mux as a handler and registers nothing.
-var allowedMuxHelpers = []string{"ownerAPI.Register", "legal.Register", "middleware.Chain"}
+// Mount is cfg.Auth.Mount: the account routes of internal/auth, which holds no
+// store and answers account JSON only (the selector hides the receiver name).
+var allowedMuxHelpers = []string{"ownerAPI.Register", "legal.Register", "middleware.Chain", "Mount"}
 
 func TestOnlyKnownHelpersGetThePublicMux(t *testing.T) {
 	found := map[string]bool{}

@@ -102,6 +102,16 @@ tasks:
       HELM_PLUGINS: .task/helm-plugins
     cmds:
       - helm unittest charts/wishlist
+      # The schema refuses replicaCount above 1 before any template runs, and
+      # helm-unittest cannot assert a schema failure: the schema is checked by
+      # the render failing, the template guard behind it by a second run that
+      # skips the schema.
+      - helm unittest --skip-schema-validation -f 'tests-skip-schema/*_test.yaml' charts/wishlist
+      - |
+        if helm template charts/wishlist --set replicaCount=2 >/dev/null 2>&1; then
+          echo "values.schema.json lets replicaCount 2 through" >&2
+          exit 1
+        fi
 
   build:
     desc: Compile the wishlist binary

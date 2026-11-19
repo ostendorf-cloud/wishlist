@@ -8,7 +8,7 @@
 // It is the one place that connects govue's account, session and csrf packages,
 // which import nothing from each other. Nothing here is built that govue
 // provides, except two small things it does not: the page that tells the SPA
-// who is signed in and which CSRF token to send, and a rate limit per login.
+// who is signed in and which CSRF token to send, and the rate limits per login.
 //
 // The session store is in process memory (session.MemoryStore). A restart
 // signs every owner out, and a second replica would not see the sessions of
@@ -52,13 +52,19 @@ const subjectPrefix = "local:"
 // issuer is the name an authenticator app groups the entry under.
 const issuer = "Wishlist"
 
-// Limits. The client limit is per address, the login limit per account
-// identifier. Both count every attempt, a success too.
+// Limits. The client limit is per address. The login limit is per login and
+// address, so one address cannot use up the budget of another. The ceiling is
+// per login alone and generous: it bounds guesses from many addresses without
+// letting a few requests lock the owner out. All count every attempt, a
+// success too.
 const (
 	DefaultClientBurst = 5
 	DefaultClientPer   = time.Minute
 	DefaultLoginBurst  = 10
 	DefaultLoginPer    = 15 * time.Minute
+
+	DefaultCeilingBurst = 100
+	DefaultCeilingPer   = time.Hour
 
 	maxSessions = 10_000
 	maxKeys     = 100_000
@@ -85,6 +91,10 @@ type Config struct {
 	ClientPer   time.Duration
 	LoginBurst  int
 	LoginPer    time.Duration
+	// CeilingBurst and CeilingPer bound all attempts on one login, from any
+	// address.
+	CeilingBurst int
+	CeilingPer   time.Duration
 	// Now is the clock. Nil is time.Now. Tests set it.
 	Now func() time.Time
 }
@@ -96,8 +106,11 @@ type Auth struct {
 	csrfKey  []byte
 	open     bool
 
-	clientLimit *middleware.RateLimit
-	loginLimit  *ratelimit.Limiter
+	clientIPs *clientip.Resolver
+
+	clientLimit  *middleware.RateLimit
+	loginLimit   *ratelimit.Limiter
+	ceilingLimit *ratelimit.Limiter
 }
 
 // New builds the sign in. The CSRF key is random per process: the sessions it
@@ -121,6 +134,8 @@ func New(cfg Config) (*Auth, error) {
 	cfg.LoginBurst = orInt(cfg.LoginBurst, DefaultLoginBurst)
 	cfg.ClientPer = orDuration(cfg.ClientPer, DefaultClientPer)
 	cfg.LoginPer = orDuration(cfg.LoginPer, DefaultLoginPer)
+	cfg.CeilingBurst = orInt(cfg.CeilingBurst, DefaultCeilingBurst)
+	cfg.CeilingPer = orDuration(cfg.CeilingPer, DefaultCeilingPer)
 
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -156,7 +171,7 @@ func New(cfg Config) (*Auth, error) {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 
-	a := &Auth{sessions: sessions, csrfKey: key, open: cfg.RegistrationOpen}
+	a := &Auth{sessions: sessions, csrfKey: key, open: cfg.RegistrationOpen, clientIPs: cfg.ClientIPs}
 
 	handlers, err := account.NewHandlers(account.HandlerConfig{
 		Service: service,
@@ -202,6 +217,9 @@ func New(cfg Config) (*Auth, error) {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 	a.loginLimit = ratelimit.New(cfg.LoginBurst, cfg.LoginPer, maxKeys)
+	a.loginLimit.Now = now
+	a.ceilingLimit = ratelimit.New(cfg.CeilingBurst, cfg.CeilingPer, maxKeys)
+	a.ceilingLimit.Now = now
 	return a, nil
 }
 
@@ -298,16 +316,20 @@ func (a *Auth) whoami(w http.ResponseWriter, r *http.Request) error {
 	return api.Write(w, http.StatusOK, info)
 }
 
-// limitByLogin takes one token per request from the bucket of the login in the
+// limitByLogin takes one token per request from the buckets of the login in the
 // body, before the handler spends a password derivation on it. It reads the
 // body the way the handler does (encoding/json, so the same case insensitive
 // field match) and puts it back. A body it cannot read a login from is left to
-// the handler, which refuses it before any derivation.
+// the handler. govue runs one Argon2id derivation for an unknown or empty
+// login, so only the client limit covers that case.
 //
-// The bucket is shared by signup, login and confirmation: together they are
-// the guesses against one account. The cost is that somebody who knows a login
-// can use up its bucket and make the owner wait until it refills. That is the
-// price of a limit that does not depend on the attacker's address.
+// Two buckets, both shared by signup, login and confirmation, which together
+// are the guesses against one account. The strict one is keyed on the login
+// and the client address: one address spends only its own budget and cannot
+// lock the owner out of another. The ceiling is keyed on the login alone and is
+// far above what an owner types, so guesses from many addresses stay bounded.
+// The cost of the ceiling is that a determined crowd can still make the owner
+// wait until it refills.
 func (a *Auth) limitByLogin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body == nil {
@@ -327,7 +349,13 @@ func (a *Auth) limitByLogin(next http.Handler) http.Handler {
 			}
 			if json.Unmarshal(head, &probe) == nil && probe.Login != "" {
 				sum := sha256.Sum256([]byte(accounts.FoldLogin(probe.Login)))
-				if ok, wait := a.loginLimit.Take(hex.EncodeToString(sum[:])); !ok {
+				login := hex.EncodeToString(sum[:])
+				client := clientip.Key(a.clientIPs.Resolve(r))
+				if ok, wait := a.loginLimit.Take(login + "|" + client); !ok {
+					api.WriteError(w, r, api.TooManyRequests(wait))
+					return
+				}
+				if ok, wait := a.ceilingLimit.Take(login); !ok {
 					api.WriteError(w, r, api.TooManyRequests(wait))
 					return
 				}

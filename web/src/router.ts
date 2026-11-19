@@ -20,9 +20,16 @@ import LoginView from './views/LoginView.vue'
 import SignupView from './views/SignupView.vue'
 import WishFormView from './views/WishFormView.vue'
 
+/**
+ * Who may open a route. 'anyone' is reachable signed in or out (the legal
+ * pages). 'guest' is for visitors without a session: a signed in owner goes to
+ * the dashboard. A route without access needs a session.
+ */
+export type Access = 'anyone' | 'guest'
+
 export const routes: RouteRecordRaw[] = [
-  { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
-  { path: '/signup', name: 'signup', component: SignupView, meta: { public: true } },
+  { path: '/login', name: 'login', component: LoginView, meta: { access: 'guest' } },
+  { path: '/signup', name: 'signup', component: SignupView, meta: { access: 'guest' } },
   { path: '/', name: 'dashboard', component: DashboardView },
   { path: '/lists/new', name: 'list-new', component: ListFormView },
   { path: '/lists/:id(\\d+)', name: 'list', component: ListView, props: true },
@@ -38,7 +45,10 @@ export const routes: RouteRecordRaw[] = [
   // as prerendered files, and the bundle that loads on one has to show it too.
   // The paths come from govue, so they are not literals here: internal/webapp
   // matches them with exact patterns, not through spaRoutes.
-  ...legalRouteRecords,
+  ...legalRouteRecords.map((record) => ({
+    ...record,
+    meta: { ...record.meta, access: 'anyone' satisfies Access },
+  })),
   // Anything else is the dashboard: a bad address never leaves a blank page.
   { path: '/:rest(.*)*', redirect: { name: 'dashboard' } },
 ]
@@ -49,24 +59,29 @@ export function createAppRouter(
 ): Router {
   const router = createRouter({ history, routes })
 
-  // Every route except the two public ones needs a session. The server is the
-  // authority and answers 401 anyway: this only saves the owner a failed page.
+  // The legal pages are for anyone. Login and signup are for visitors only.
+  // Every other route needs a session. The server is the authority and answers
+  // 401 anyway: this only saves the owner a failed page.
   router.beforeEach(async (to) => {
     if (!auth.state.loaded) {
       await auth.refresh()
     }
-    if (to.meta.public) {
+    const access = to.meta.access as Access | undefined
+    if (access === 'anyone') {
+      return true
+    }
+    if (access === 'guest') {
       return auth.state.signedIn ? { name: 'dashboard' } : true
     }
     return auth.state.signedIn ? true : { name: 'login' }
   })
 
   // A session that ends while a page is open (a 401, a sign out elsewhere)
-  // sends the owner to the sign in once.
+  // sends the owner to the sign in once, unless the page is open to anyone.
   watch(
     () => auth.state.signedIn,
     (signedIn) => {
-      if (!signedIn && !router.currentRoute.value.meta.public) {
+      if (!signedIn && router.currentRoute.value.meta.access === undefined) {
         void router.push({ name: 'login' })
       }
     },

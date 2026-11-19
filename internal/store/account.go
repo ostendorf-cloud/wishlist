@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -59,22 +60,50 @@ func (s *AccountStore) FindAccount(ctx context.Context, loginKey string) (Accoun
 	return a, nil
 }
 
+// UnconfirmedTTL is how long an account may stay without a confirmed TOTP
+// secret before the next signup deletes it. The SQL below spells the same 24
+// hours.
+const UnconfirmedTTL = 24 * time.Hour
+
 // CreateAccount adds an owner row and its credentials in one transaction and
 // returns the new account. The counter is always stored as 0, so the TOTP
-// secret starts unconfirmed. The owner row gets a subject of its own that
-// holds no login and no address. A login that exists is ErrLoginTaken and
-// leaves no owner row behind.
+// secret starts unconfirmed. The owner row gets a subject and a username of
+// its own that hold no login and no address: the guest side shows the username
+// when there is no display name, and a guest must never see the login. A login
+// that exists is ErrLoginTaken and leaves no owner row behind.
+//
+// First the transaction deletes stale unconfirmed accounts, so a login that
+// was registered and never confirmed is free again after 24 hours.
 func (s *AccountStore) CreateAccount(ctx context.Context, login, loginKey, passwordHash, totpSecret string) (Account, error) {
 	var a Account
 	err := runTx(ctx, s.pool, func(tx pgx.Tx) error {
+		// An owner is deleted only when it came from a local registration, its
+		// secret was never confirmed, it is older than 24 hours and no list
+		// points at it. The credentials go with it (on delete cascade). Lists
+		// are the only other table that references owners.
+		if _, err := tx.Exec(ctx, `
+			delete from owners o
+			where o.subject like 'local:%'
+			  and o.created_at < now() - interval '24 hours'
+			  and exists (select 1 from owner_credentials c
+			              where c.owner_id = o.id and c.totp_counter = 0)
+			  and not exists (select 1 from lists l where l.owner_id = o.id)`,
+		); err != nil {
+			return fmt.Errorf("delete unconfirmed owners: %w", err)
+		}
 		var id int64
 		if err := tx.QueryRow(ctx, `
 			insert into owners (subject, username, display_name, email)
-			values ('local:' || gen_random_uuid()::text, $1, '', $1)
+			values ('local:' || gen_random_uuid()::text, '', '', '')
 			returning id`,
-			login,
 		).Scan(&id); err != nil {
 			return fmt.Errorf("insert owner: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			update owners set username = 'owner-' || id::text where id = $1`,
+			id,
+		); err != nil {
+			return fmt.Errorf("name owner: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
 			insert into owner_credentials (owner_id, login, login_key, password_hash, totp_secret, totp_counter)

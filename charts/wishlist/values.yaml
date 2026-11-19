@@ -11,12 +11,17 @@ replicaCount: 1
 
 # Own accounts: the owner signs in with an email address, a password and TOTP.
 auth:
-  # Anybody can create an account while this is true. Set false to close it.
-  registrationOpen: true
+  # Closed by default: a public install does not let anybody create an owner.
+  # Set true to open registration, for example for the first owner, and close
+  # it again afterwards. docker-compose and .env.example keep it open for local
+  # development. Accounts that never confirm their TOTP secret are deleted at
+  # the next signup after 24 hours.
+  registrationOpen: false
   # CIDR ranges or addresses of the proxies in front of the pod, whose
-  # X-Forwarded-For is believed. Empty trusts nothing: every sign in limit then
-  # keys by the connection address, which behind an ingress is the ingress, so
-  # all callers share one bucket. Set the ingress controller's pod range.
+  # X-Forwarded-For is believed. Required when ingress.enabled or
+  # httpRoute.enabled is true: the render fails otherwise, because every sign
+  # in limit would key by the proxy's address and all callers would share one
+  # bucket. Set the ingress controller's or gateway's pod range.
   trustedProxies: []
 
 image:

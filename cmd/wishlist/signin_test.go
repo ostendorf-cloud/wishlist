@@ -174,7 +174,7 @@ func newRig(t *testing.T, backend accounts.Backend, open bool, tune func(*auth.C
 			cfg.Now = c.Now
 			// Tests share one remote address: lift the limit unless a test
 			// is about the limit.
-			cfg.ClientBurst, cfg.LoginBurst = 1000, 1000
+			cfg.ClientBurst, cfg.LoginBurst, cfg.CeilingBurst = 1000, 1000, 1000
 			if tune != nil {
 				tune(cfg)
 			}
@@ -302,7 +302,7 @@ func TestSignInEndToEndOnPostgreSQL(t *testing.T) {
 		cfg:      config.Config{RegistrationOpen: true, AllowPlainHTTP: true},
 		tune: func(cfg *auth.Config) {
 			cfg.Now = c.Now
-			cfg.ClientBurst, cfg.LoginBurst = 1000, 1000
+			cfg.ClientBurst, cfg.LoginBurst, cfg.CeilingBurst = 1000, 1000, 1000
 		},
 	})
 	if err != nil {
@@ -503,9 +503,39 @@ func TestLoginAndRegistrationAreLimitedPerAddress(t *testing.T) {
 	}
 }
 
-func TestLoginAndRegistrationAreLimitedPerAccount(t *testing.T) {
+// The strict bucket is per login and address: one client spends only its own
+// budget, so it cannot lock the owner out of a second client.
+func TestOneClientCannotLockTheOwnerOutForAnother(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, newFakeBackend(), true, func(c *auth.Config) { c.LoginBurst = 3 })
+	attacker := newBrowser(t, r.h)
+	attacker.addr = "192.0.2.21:4000"
+	for i := 1; i <= 3; i++ {
+		if rec := attacker.post("/login", testLogin, testPassword, "123456"); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d = %d, want 401", i, rec.Code)
+		}
+	}
+	// Same address, another spelling of the login: still the same bucket.
+	if rec := attacker.post("/login", strings.ToUpper(testLogin), testPassword, "123456"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("fourth guess from one address = %d, want 429", rec.Code)
+	}
+	if _, rec := attacker.signup(testLogin); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("signup of the same login from that address = %d, want 429", rec.Code)
+	}
+	owner := newBrowser(t, r.h)
+	owner.addr = "192.0.2.99:4000"
+	if rec := owner.post("/login", testLogin, testPassword, "123456"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("the owner's address = %d, want 401 (its own bucket, not 429)", rec.Code)
+	}
+	if rec := attacker.post("/login", "someone.else@example.invalid", testPassword, "123456"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("another login from the attacker = %d, want 401: the limit is per login", rec.Code)
+	}
+}
+
+// The ceiling is per login alone: many addresses together stay bounded.
+func TestAllAddressesTogetherAreBoundedPerLogin(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, newFakeBackend(), true, func(c *auth.Config) { c.CeilingBurst = 3 })
 	for i := 1; i <= 3; i++ {
 		b := newBrowser(t, r.h)
 		b.addr = fmt.Sprintf("192.0.2.%d:4000", 20+i)
@@ -513,17 +543,86 @@ func TestLoginAndRegistrationAreLimitedPerAccount(t *testing.T) {
 			t.Fatalf("attempt %d = %d, want 401", i, rec.Code)
 		}
 	}
-	// A fresh address and a different spelling of the same login: still one account.
 	fresh := newBrowser(t, r.h)
 	fresh.addr = "192.0.2.99:4000"
 	if rec := fresh.post("/login", strings.ToUpper(testLogin), testPassword, "123456"); rec.Code != http.StatusTooManyRequests {
 		t.Errorf("fourth guess against one login from a new address = %d, want 429", rec.Code)
 	}
-	if _, rec := fresh.signup(testLogin); rec.Code != http.StatusTooManyRequests {
-		t.Errorf("signup of the same login = %d, want 429", rec.Code)
-	}
 	if rec := fresh.post("/login", "someone.else@example.invalid", testPassword, "123456"); rec.Code != http.StatusUnauthorized {
-		t.Errorf("another login = %d, want 401: the limit is per account", rec.Code)
+		t.Errorf("another login = %d, want 401: the ceiling is per login", rec.Code)
+	}
+	// An hour later the ceiling has refilled.
+	r.clock.Add(time.Hour)
+	if rec := fresh.post("/login", testLogin, testPassword, "123456"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("after an hour = %d, want 401", rec.Code)
+	}
+}
+
+// A login while holding a session ends that session: the old cookie must not
+// stay valid next to the new one (session fixation).
+func TestALoginEndsTheSessionTheRequestCarried(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, newFakeBackend(), true, nil)
+	b := newBrowser(t, r.h)
+	secret := r.register(t, b, testLogin)
+	old := map[string]string{}
+	for k, v := range b.cookies {
+		old[k] = v
+	}
+	if len(old) != 1 {
+		t.Fatalf("cookies = %v, want the session cookie", old)
+	}
+
+	if rec := r.login(t, b, testLogin, secret); rec.Code != http.StatusOK {
+		t.Fatalf("login while signed in = %d %s", rec.Code, rec.Body)
+	}
+	if got := ownerStatus(b, http.MethodGet, "/lists", nil, ""); got != http.StatusOK {
+		t.Fatalf("the new session answered %d, want 200", got)
+	}
+	holder := newBrowser(t, r.h)
+	holder.cookies = old
+	if got := ownerStatus(holder, http.MethodGet, "/lists", nil, ""); got != http.StatusUnauthorized {
+		t.Errorf("the session cookie from before the login answered %d, want 401", got)
+	}
+	for name, value := range b.cookies {
+		if old[name] == value {
+			t.Errorf("the cookie %s was not replaced by the login", name)
+		}
+	}
+}
+
+// A signup deletes the accounts that were never confirmed within 24 hours, and
+// only those.
+func TestASignupDeletesStaleUnconfirmedAccountsOnly(t *testing.T) {
+	t.Parallel()
+	fake := newFakeBackend()
+	r := newRig(t, fake, true, nil)
+	fake.now = r.clock.Now
+
+	stale, young, confirmed, withData := "stale@example.invalid", "young@example.invalid", "confirmed@example.invalid", "data@example.invalid"
+	b := newBrowser(t, r.h)
+	r.register(t, newBrowser(t, r.h), confirmed)
+	if _, rec := b.signup(withData); rec.Code != http.StatusCreated {
+		t.Fatalf("signup = %d", rec.Code)
+	}
+	fake.hasData[fake.byKey[accounts.FoldLogin(withData)]] = true
+	if _, rec := b.signup(stale); rec.Code != http.StatusCreated {
+		t.Fatalf("signup = %d", rec.Code)
+	}
+	r.clock.Add(25 * time.Hour)
+	if _, rec := newBrowser(t, r.h).signup(young); rec.Code != http.StatusCreated {
+		t.Fatalf("signup = %d", rec.Code)
+	}
+	r.clock.Add(time.Hour)
+
+	// Any signup runs the cleanup. The stale login is free again.
+	if _, rec := newBrowser(t, r.h).signup(stale); rec.Code != http.StatusCreated {
+		t.Errorf("the stale login after 24 hours = %d, want 201 (account deleted)", rec.Code)
+	}
+	for _, kept := range []string{young, confirmed, withData} {
+		if _, rec := newBrowser(t, r.h).signup(kept); rec.Code != http.StatusConflict {
+			t.Errorf("signup of %s = %d, want 409 (account kept)", kept, rec.Code)
+		}
 	}
 }
 
@@ -597,7 +696,7 @@ func TestTheSecurityChecksNoticeAWeakenedWiring(t *testing.T) {
 			cfg:      config.Config{RegistrationOpen: open, AllowPlainHTTP: true},
 			tune: func(a *auth.Config) {
 				a.Now = c.Now
-				a.ClientBurst, a.LoginBurst = 1000, 1000
+				a.ClientBurst, a.LoginBurst, a.CeilingBurst = 1000, 1000, 1000
 			},
 		})
 		if err != nil {
@@ -642,9 +741,21 @@ func TestTheSecurityChecksNoticeAWeakenedWiring(t *testing.T) {
 	})
 	t.Run("registration closed ignored", func(t *testing.T) {
 		t.Parallel()
-		// The setting says closed, the wiring behaves as open.
-		openRig := build(t, true, func(*webapp.Config) {})
-		found := probe(t, openRig, true)
+		// The setting says closed, the sign in is built open.
+		c := &clock{t: time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)}
+		h, err := buildHandler(slog.New(slog.DiscardHandler), handlerDeps{
+			owners:   ownertest.New(),
+			accounts: accounts.New(newFakeBackend()),
+			cfg:      config.Config{RegistrationOpen: false, AllowPlainHTTP: true},
+			tune: func(a *auth.Config) {
+				a.Now = c.Now
+				a.RegistrationOpen = true
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := probe(t, rig{h: h, clock: c}, true)
 		if !contains(found, "registration is closed but signup answered") {
 			t.Errorf("ignoring the setting went unnoticed: %v", found)
 		}

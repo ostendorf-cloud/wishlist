@@ -160,8 +160,8 @@ serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on 
 - `TestOnlyTheAdapterWritesAResponse` keeps handlers from writing around the adapter.
 - `internal/legal` is the one writer outside the adapter on the public mux (the legal
   redirects and the four prerendered pages, no data). `TestOnlyKnownHelpersGetThePublicMux`
-  allows exactly `ownerAPI.Register` and `legal.Register` to receive the mux in
-  `internal/webapp`, and `internal/legal/boundary_test.go` limits that package to the standard
+  allows exactly `ownerAPI.Register`, `legal.Register`, `middleware.Chain` and the account
+  routes' `Mount` (`internal/auth`) to receive the mux in `internal/webapp`, and `internal/legal/boundary_test.go` limits that package to the standard
   library and `govue/language`, so it can never reach the store. A third helper or an import
   of this module there fails a test.
 - `TestNothingUnderWebappReachesTheGuestSide` is the handler layer rule of the store boundary:
@@ -198,8 +198,17 @@ the same owners row.
   without `WISHLIST_TEST_DATABASE_URL`, fails in CI without it).
 - The account id is the owners row id as a decimal string, never the login and never a
   provider subject. The session subject is `local:<id>`, so a later OIDC subject cannot equal
-  it. A registration creates an owners row with a subject `local:<uuid>` and the login as
-  username and email.
+  it. A registration creates an owners row with a subject `local:<uuid>`, the neutral
+  username `owner-<id>`, and an empty display name and email. The login lives only in
+  `owner_credentials`: the guest side shows the display name or else the username, so a guest
+  must never see the login.
+- Unconfirmed accounts: every signup first deletes the owners from a local registration (subject
+  `local:%`) whose TOTP counter is still 0, that are older than 24 hours and that have no list
+  (`lists` is the only table besides `owner_credentials` that references `owners`). One SQL
+  statement in `AccountStore.CreateAccount`, in the same transaction as the insert, so a login
+  that was never confirmed is free again after 24 hours. Tested with the fake backend
+  (`TestASignupDeletesStaleUnconfirmedAccountsOnly` in `cmd/wishlist`) and on PostgreSQL
+  (`internal/store/account_db_test.go`).
 - The TOTP secret is stored in the clear in `owner_credentials.totp_secret`. govue allows
   encryption at rest and does not require it. See the decisions in the pull request of
   issue 4.
@@ -214,21 +223,30 @@ the same owners row.
   says the port is published on loopback only (compose does). The chart sets neither.
 - Middleware order of a route: rate limit, CSRF protector, session. A password route adds the
   stricter limit of `auth` (per address, 5 per minute) after the general one, and signup, login
-  and confirm also take a token from a bucket per login (10 per 15 minutes, case folded, shared
-  by the three). A refused guess costs no password derivation.
+  and confirm also take a token from a bucket per login and client address (10 per 15 minutes,
+  login case folded, shared by the three), then from a ceiling per login alone (100 per hour).
+  One address cannot lock the owner out of another address. A refused guess costs no password
+  derivation. A body without a login gets no per login bucket: govue runs one Argon2id
+  derivation for it, and only the client limit covers that.
 - `webapp.Config.CSRFExpected` is the session's token (`csrf.Token(key, session.ID)`). Every
   unsafe request of a signed in session needs it. A request without a session needs none, and
   the protector's origin check still applies. The CSRF key is random per process, which is
   enough because the sessions are in this process only.
-- `REGISTRATION_OPEN` (default true) closes signup: the route stays, answers 403 `signup is not
-  available`, and creates nothing.
+- `REGISTRATION_OPEN` (binary default true) closes signup: the route stays, answers 403 `signup
+  is not available`, and creates nothing. The chart default is `auth.registrationOpen: false`;
+  docker-compose and `.env.example` keep it open for local development.
 - Session store: govue's `session.MemoryStore`, in the memory of the process. A restart signs
   everybody out. A second replica would not know the first one's sessions, so the chart fails
-  the render for `replicaCount` above 1 (`templates/deployment.yaml`, tested in
-  `charts/wishlist/tests/accounts_test.yaml`). Scaling out needs a shared `session.Store` first.
+  the render for `replicaCount` above 1: `values.schema.json` (`maximum: 1`) first, and a guard
+  in `templates/deployment.yaml` behind it. helm-unittest cannot assert a schema failure, so
+  `task test:helm` runs the guard test in `charts/wishlist/tests-skip-schema/` with
+  `--skip-schema-validation` and checks that `helm template --set replicaCount=2` fails.
+  Scaling out needs a shared `session.Store` first.
 - `TRUSTED_PROXIES` (chart: `auth.trustedProxies`) names the proxies whose `X-Forwarded-For` is
   believed. Empty trusts nothing, and then all callers behind an ingress share one limit bucket.
-  Set it before the first deployment.
+  The chart render fails when `ingress.enabled` or `httpRoute.enabled` is true and
+  `auth.trustedProxies` is empty (`templates/deployment.yaml`, `tests/accounts_test.yaml`).
+- Security headers (CSP and the rest) are not set yet: issue 50.
 - Tests: `cmd/wishlist/signin_test.go` runs the whole flow through the real handler (register,
   confirm, owner request, logout, stolen cookie, CSRF, limits, closed registration) over an in
   memory credentials backend, and the same flow over PostgreSQL in CI. `probe` is the shared

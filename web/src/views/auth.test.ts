@@ -28,6 +28,41 @@ describe('the route guard', () => {
     await waitFor(() => expect(router.currentRoute.value.name).toBe('dashboard'))
   })
 
+  it('keeps a signed in owner off the sign up page', async () => {
+    const { router } = await renderApp(fakeApi(), '/signup')
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('dashboard'))
+  })
+
+  it.each([
+    ['/en/imprint', 'Imprint'],
+    ['/en/privacy', 'Privacy policy'],
+  ])('shows %s to a visitor without a session', async (path, heading) => {
+    const { router } = await renderApp(fakeApi(), path, fakeAuth({ signedIn: false }))
+
+    expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeVisible()
+    expect(router.currentRoute.value.path).toBe(path)
+  })
+
+  it.each([
+    ['/de/imprint', 'Impressum'],
+    ['/de/privacy', 'Datenschutzerklärung'],
+  ])('shows %s to a signed in owner too', async (path, heading) => {
+    const { router } = await renderApp(fakeApi(), path)
+
+    expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeVisible()
+    expect(router.currentRoute.value.path).toBe(path)
+  })
+
+  it('leaves a legal page open when the session ends under it', async () => {
+    const { router, auth } = await renderApp(fakeApi(), '/en/imprint')
+
+    auth.state.signedIn = false
+    await Promise.resolve()
+
+    expect(router.currentRoute.value.path).toBe('/en/imprint')
+  })
+
   it('sends the owner to the sign in when the session ends under an open page', async () => {
     const { router, auth } = await renderApp(fakeApi(), '/')
     expect(router.currentRoute.value.name).toBe('dashboard')

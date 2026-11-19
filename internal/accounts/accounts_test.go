@@ -51,6 +51,12 @@ func TestStoreConformance(t *testing.T) {
 	accounttest.Run(t, accounttest.Harness{
 		NewStore:  func(*testing.T) account.Store { return accounts.New(core.Accounts()) },
 		FoldsCase: true,
+		// Every guard in account.go is one conditional UPDATE: the database
+		// compares and writes in one statement, so a race cannot split them.
+		// The default of 1000 rounds of 32 calls is for stores that compare in
+		// Go, and costs many round trips over a network here. 100 rounds still
+		// catch a regression to read then write.
+		Rounds: 100,
 		Disable: func(t *testing.T, _ account.Store, id string) {
 			t.Helper()
 			n, ok := accounts.OwnerID(id)

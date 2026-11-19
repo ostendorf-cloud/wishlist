@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/ostendorf-cloud/wishlist/internal/accounts"
 	"github.com/ostendorf-cloud/wishlist/internal/store"
@@ -20,12 +21,30 @@ type fakeBackend struct {
 	next  int64
 	byID  map[int64]*store.Account
 	byKey map[string]int64
+
+	// now is the clock of the 24 hour cleanup. Nil is time.Now.
+	now     func() time.Time
+	created map[int64]time.Time
+	// hasData marks an owner that has lists: it is never cleaned up.
+	hasData map[int64]bool
 }
 
 var _ accounts.Backend = (*fakeBackend)(nil)
 
 func newFakeBackend() *fakeBackend {
-	return &fakeBackend{byID: map[int64]*store.Account{}, byKey: map[string]int64{}}
+	return &fakeBackend{
+		byID:    map[int64]*store.Account{},
+		byKey:   map[string]int64{},
+		created: map[int64]time.Time{},
+		hasData: map[int64]bool{},
+	}
+}
+
+func (f *fakeBackend) clock() time.Time {
+	if f.now != nil {
+		return f.now()
+	}
+	return time.Now()
 }
 
 func (f *fakeBackend) FindAccount(_ context.Context, key string) (store.Account, error) {
@@ -41,6 +60,14 @@ func (f *fakeBackend) FindAccount(_ context.Context, key string) (store.Account,
 func (f *fakeBackend) CreateAccount(_ context.Context, login, key, hash, secret string) (store.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// The rule of the SQL: unconfirmed, older than the TTL, no data.
+	for id, a := range f.byID {
+		if a.TOTPCounter == 0 && !f.hasData[id] && f.clock().Sub(f.created[id]) > store.UnconfirmedTTL {
+			delete(f.byKey, accounts.FoldLogin(a.Login))
+			delete(f.byID, id)
+			delete(f.created, id)
+		}
+	}
 	if _, taken := f.byKey[key]; taken {
 		return store.Account{}, store.ErrLoginTaken
 	}
@@ -48,6 +75,7 @@ func (f *fakeBackend) CreateAccount(_ context.Context, login, key, hash, secret 
 	a := &store.Account{ID: f.next, Login: login, PasswordHash: hash, TOTPSecret: secret}
 	f.byID[a.ID] = a
 	f.byKey[key] = a.ID
+	f.created[a.ID] = f.clock()
 	return *a, nil
 }
 

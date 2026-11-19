@@ -8,13 +8,6 @@ tests:
           path: spec.replicas
           value: 1
 
-  - it: fails the render with more than one replica
-    set:
-      replicaCount: 2
-    asserts:
-      - failedTemplate:
-          errorPattern: replicaCount cannot be above 1
-
   - it: allows turning the workload off
     set:
       replicaCount: 0
@@ -23,13 +16,62 @@ tests:
           path: spec.replicas
           value: 0
 
-  - it: leaves registration open by default
+  - it: closes registration by default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REGISTRATION_OPEN
+            value: "false"
+
+  - it: opens registration by value
+    set:
+      auth:
+        registrationOpen: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: REGISTRATION_OPEN
             value: "true"
+
+  - it: fails the render behind an ingress without trusted proxies
+    set:
+      ingress:
+        enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: auth.trustedProxies must be set
+
+  - it: fails the render behind an HTTPRoute without trusted proxies
+    set:
+      httpRoute:
+        enabled: true
+        parentRefs:
+          name: shared-gateway
+          namespace: gateway-system
+    asserts:
+      - failedTemplate:
+          errorPattern: auth.trustedProxies must be set
+
+  - it: renders behind an ingress with trusted proxies
+    set:
+      ingress:
+        enabled: true
+      auth:
+        trustedProxies:
+          - 10.42.0.0/16
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: 10.42.0.0/16
+
+  - it: renders without trusted proxies while no route is enabled
+    asserts:
+      - hasDocuments:
+          count: 1
 
   - it: closes registration by value
     set:
