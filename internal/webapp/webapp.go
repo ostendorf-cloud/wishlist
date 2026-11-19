@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"path"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/ostendorf-cloud/govue/ratelimit"
 
 	"github.com/ostendorf-cloud/wishlist/internal/legal"
+	"github.com/ostendorf-cloud/wishlist/internal/secheaders"
 	"github.com/ostendorf-cloud/wishlist/internal/webapp/owner"
 )
 
@@ -60,6 +62,9 @@ type Config struct {
 	ClientIPs *clientip.Resolver
 	// Views counts page views, see NewViews. Nil counts nothing.
 	Views *analytics.Client
+	// TrustedProxies are the peers whose X-Forwarded-Proto is believed when
+	// the handler decides whether to send HSTS. Empty trusts no header.
+	TrustedProxies []netip.Prefix
 	// Dist is the built SPA.
 	Dist   fs.FS
 	Logger *slog.Logger
@@ -164,6 +169,7 @@ func Handler(cfg Config) (http.Handler, error) {
 	chain := []middleware.Middleware{
 		middleware.Recover(logger),
 		middleware.RequestID(logger),
+		secheaders.Middleware(cfg.TrustedProxies),
 		middleware.AccessLog{ClientIP: ips}.Middleware,
 	}
 	// Innermost, directly around the mux, because it reads r.Pattern and

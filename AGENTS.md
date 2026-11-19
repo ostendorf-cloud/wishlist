@@ -22,6 +22,8 @@ The global baseline already applies here and is not repeated below.
 - `internal/webapp` builds the public handler (govue's middleware chain, the SPA).
   `internal/webapp/owner` is the owner API, `owner/dto` its request and response types,
   `owner/ownertest` an in memory store for handler tests. See "The owner API".
+- `internal/secheaders` sends the security headers of the public handler, see "Security
+  headers".
 - `internal/depsync` checks that `go.mod` and `web/package.json` pin the same govue version,
   and that `web/pnpm-lock.yaml` still resolves govue's Vue package to its `/web`
   subdirectory; see "govue's two halves move together" below.
@@ -256,7 +258,7 @@ the same owners row.
   believed. Empty trusts nothing, and then all callers behind an ingress share one limit bucket.
   The chart render fails when `ingress.enabled` or `httpRoute.enabled` is true and
   `auth.trustedProxies` is empty (`templates/deployment.yaml`, `tests/accounts_test.yaml`).
-- Security headers (CSP and the rest) are not set yet: issue 50.
+- Security headers: see "Security headers" below.
 - Tests: `cmd/wishlist/signin_test.go` runs the whole flow through the real handler (register,
   confirm, owner request, logout, stolen cookie, CSRF, limits, closed registration) over an in
   memory credentials backend, and the same flow over PostgreSQL in CI. `probe` is the shared
@@ -284,8 +286,49 @@ bucket, so set it before the first deployment.
 
 Left out on purpose: images (the keys that delete returns are counted in a debug log line, the
 objects are not deleted: image milestone), share tokens, guest access, translations, link
-import. Security headers (CSP) are not set by this handler yet; they need a check against the
-built bundle in a browser.
+import.
+
+## Security headers
+
+`internal/secheaders` puts govue's `middleware.DefaultSecurity()` on every answer of the public
+handler (outer chain of `webapp.Handler`, after `RequestID`, before the access log), so a 404
+and a redirect carry it too. It sits outside `internal/webapp` because the handler layer test
+allows no other code there to take a `ResponseWriter`. The admin listener is not covered.
+
+- The policy is govue's default, unchanged: `default-src 'none'`, same origin script, style,
+  image (plus `data:`), font and fetch, `form-action 'self'`, `frame-ancestors 'none'`,
+  `base-uri 'none'`, `object-src 'none'`, and a fresh nonce on `script-src` and `style-src`.
+  With `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` and the
+  cross origin isolation headers.
+- Why nothing is widened: the build writes `index.html` with one module script and one
+  stylesheet as files, the prerendered legal pages the same, and no `style` attribute or inline
+  script (checked against the built output). Vue sets runtime styles through the CSSOM, which
+  `style-src` does not restrict. govue's theme boot script would be injected at serve time with
+  the response nonce (`themeboot.Inject` and `middleware.Nonce`), so it needs no hash and no
+  `unsafe-inline`. No code injects it yet. Once it exists, both servers need it: `spa()` in
+  `webapp.go` and `internal/legal` for the prerendered pages. `themeboot.Shell` sets no-store,
+  `Inject` alone does not. A page that carries a nonce must never be cached.
+- HSTS is `max-age=31536000` only: no `includeSubDomains`, no `preload` (owner decision).
+  govue's `DefaultSecurity` sends a longer value (one year, subdomains, preload), so
+  `internal/secheaders` sets `HSTS = 0` on govue's `Security`, which omits govue's header, and
+  writes its own value. Never both. It is sent only when the request arrived over TLS, or the
+  TCP peer is inside `TRUSTED_PROXIES` and its last `X-Forwarded-Proto` entry is `https`. The
+  header of any other peer is ignored. Plain HTTP, such as local development, gets no HSTS.
+  `webapp.Config.TrustedProxies` carries the same prefixes as the resolver. The ingress must
+  set `X-Forwarded-Proto`, and `Forwarded` (RFC 7239) is not read.
+- Chain order: PR 11 (Umami) turns the chain in `webapp.go` into a slice. After both land,
+  `secheaders.Middleware(cfg.TrustedProxies)` goes into the slice after `RequestID`, and
+  `cfg.Views.Middleware` stays appended last (innermost).
+- Tests: `internal/webapp/security_test.go` runs the header table on plain HTTP and behind a
+  trusted proxy over https, and compares the whole policy (nonce stripped) with govue's
+  default as an allowlist. It also holds the HSTS table. `cmd/wishlist/csp_dist_test.go` scans
+  the embedded build, HTML and CSS, for inline scripts, `style` attributes, `<style>`, event
+  handlers, `javascript:` URLs (entity decoded, `xlink:href` too), third party origins (also in
+  `srcset` and form `action`), remote or data font sources and `@import`. A build change that
+  the policy would block fails with the file named. It needs the built `dist/`, like the rest
+  of `cmd/wishlist`.
+- A change that needs an inline script or style (an analytics snippet, a new govue feature)
+  extends the handler that serves the page to use the nonce, and does not loosen the policy.
 
 ## Legal pages
 
