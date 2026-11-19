@@ -161,9 +161,10 @@ serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on 
 - `internal/legal` is the one writer outside the adapter on the public mux (the legal
   redirects and the four prerendered pages, no data). `TestOnlyKnownHelpersGetThePublicMux`
   allows exactly `ownerAPI.Register`, `legal.Register`, `middleware.Chain` and the account
-  routes' `Mount` (`internal/auth`) to receive the mux in `internal/webapp`, and `internal/legal/boundary_test.go` limits that package to the standard
-  library and `govue/language`, so it can never reach the store. A third helper or an import
-  of this module there fails a test.
+  routes' `Mount` (`internal/auth`) to receive the mux in `internal/webapp`, and
+  `internal/legal/boundary_test.go` limits that package to the standard library and
+  `govue/language`, so it can never reach the store. A third helper or an import of this
+  module there fails a test.
 - `TestNothingUnderWebappReachesTheGuestSide` is the handler layer rule of the store boundary:
   code under `internal/webapp` may name only `OwnerStore`, `ErrNotFound`, `List`, `Wish`,
   `ListInput` and `WishInput` of the store, and never `Guests`, `Owners`, `Core` or
