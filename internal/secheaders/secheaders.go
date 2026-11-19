@@ -14,34 +14,41 @@ import (
 	"github.com/ostendorf-cloud/govue/middleware"
 )
 
+// hsts is the Strict-Transport-Security value: one year, this host only. The
+// owner decided against includeSubDomains and preload, which bind every
+// subdomain and are hard to undo. govue's default is longer, so the value is
+// built here.
+const hsts = "max-age=31536000"
+
 // Middleware sends govue's default security headers on every answer of the
 // public handler, error answers and redirects included.
 //
 // The policy is govue's default, unchanged: same origin script, style, image,
 // font and fetch, no framing, no base tag, and a per response nonce for inline
 // script and style. The built SPA needs nothing more, because the build
-// writes one module script and one stylesheet as files. The nonce is what lets
-// govue's theme boot script run, which the handler injects at serve time.
+// writes one module script and one stylesheet as files. The nonce would let
+// govue's theme boot script run once the handler injects it. No code does that
+// yet. Both servers need the injection: spa() in internal/webapp and
+// internal/legal for the prerendered pages. themeboot.Shell sets no-store,
+// themeboot.Inject alone does not, and a page with a nonce must never be cached.
 // TestTheBuiltSPAFitsThePolicy in cmd/wishlist checks the built files.
 //
-// Strict-Transport-Security is the one change. The default sends it on every
-// answer, so a browser that reached the site over plain HTTP would be told to
-// upgrade. It is sent only when the request arrived over TLS or a trusted
-// proxy says it did, see viaTLS.
+// Strict-Transport-Security differs from the default. govue's HSTS is switched
+// off (HSTS = 0), so its longer value is never sent on top. This package sends
+// hsts itself, only when the request arrived over TLS or a trusted proxy says
+// it did, see viaTLS. A browser that reached the site over plain HTTP is not
+// told to upgrade.
 func Middleware(trusted []netip.Prefix) middleware.Middleware {
-	withHSTS := middleware.DefaultSecurity()
-	withoutHSTS := middleware.DefaultSecurity()
-	withoutHSTS.HSTS = 0
+	security := middleware.DefaultSecurity()
+	security.HSTS = 0
 
 	return func(next http.Handler) http.Handler {
-		secure := withHSTS.Middleware(next)
-		plain := withoutHSTS.Middleware(next)
+		inner := security.Middleware(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if viaTLS(r, trusted) {
-				secure.ServeHTTP(w, r)
-				return
+				w.Header().Set("Strict-Transport-Security", hsts)
 			}
-			plain.ServeHTTP(w, r)
+			inner.ServeHTTP(w, r)
 		})
 	}
 }
@@ -59,7 +66,7 @@ func viaTLS(r *http.Request, trusted []netip.Prefix) bool {
 	if err != nil {
 		return false
 	}
-	addr := peer.Addr().Unmap()
+	addr := peer.Addr().Unmap().WithZone("")
 	for _, prefix := range trusted {
 		if !prefix.Contains(addr) {
 			continue
