@@ -84,9 +84,6 @@ The rewrite of `old_wishlist` as a Go API behind a Vue SPA on govue.
   `old_wishlist`, or earlier — decide in the link-import implementation issue.
 - What the SPA shows when a shop blocks or times out the import fetch: empty fields for the owner
   to fill by hand, matching `old_wishlist`, or an explicit error — decide in the same issue.
-- How the owner-response blindness test is built for JSON types in place of template page data:
-  reflection over response structs, a generator, or a lint rule — decide in the implementation
-  issue that first adds an owner API endpoint. See ADR 0001.
 - The locale negotiation contract between the SPA and the API: header, query parameter or cookie,
   and which side owns the decision — decide before the i18n implementation issue.
 

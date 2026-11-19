@@ -20,6 +20,9 @@ importers:
       vue:
         specifier: ^3.5.44
         version: 3.5.45(typescript@5.9.3)
+      vue-router:
+        specifier: ^4.6.5
+        version: 4.6.5(vue@3.5.45(typescript@5.9.3))
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.3.3
@@ -1599,6 +1602,11 @@ packages:
     peerDependencies:
       vue: ^3.0.0
 
+  vue-router@4.6.5:
+    resolution: {integrity: sha512-HBoGqixpB2ej1kI17NotdOatUdKIsi3yfOQ5vhwAhcoHk90+JtwtIy7MEeOqdPi1+npmQVMEu5F+Hvw+3TU48w==}
+    peerDependencies:
+      vue: ^3.5.0
+
   vue-tsc@3.3.14:
     resolution: {integrity: sha512-URAu2H9AuMZMg9GCgnqbaHHHd8pBZRAwNV2e2yYS8VDsoTVXHiOSo663OS6DkEvauQ2yixn5TPFJ9WV9QIspkA==}
     hasBin: true
@@ -3065,6 +3073,11 @@ snapshots:
       '@intlify/core-base': 11.4.22
       '@intlify/devtools-types': 11.4.22
       '@intlify/shared': 11.4.22
+      '@vue/devtools-api': 6.6.4
+      vue: 3.5.45(typescript@5.9.3)
+
+  vue-router@4.6.5(vue@3.5.45(typescript@5.9.3)):
+    dependencies:
       '@vue/devtools-api': 6.6.4
       vue: 3.5.45(typescript@5.9.3)
 

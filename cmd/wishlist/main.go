@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +19,8 @@ import (
 	"github.com/ostendorf-cloud/govue/metrics"
 
 	"github.com/ostendorf-cloud/wishlist/internal/config"
+	"github.com/ostendorf-cloud/wishlist/internal/webapp"
+	"github.com/ostendorf-cloud/wishlist/internal/webapp/owner"
 )
 
 func main() {
@@ -34,11 +37,6 @@ func run() error {
 	}
 
 	logger := logging.New(os.Stdout, cfg.LogLevel)
-
-	handler, err := buildHandler()
-	if err != nil {
-		return err
-	}
 
 	checks := health.New()
 
@@ -58,6 +56,13 @@ func run() error {
 		db.Close()
 	}()
 
+	// The owner API gets the owner's side of the store and nothing else.
+	owners := db.Owners()
+	handler, err := buildHandler(logger, owners, resolveOwner(cfg.DevOwner, owners, logger))
+	if err != nil {
+		return err
+	}
+
 	return httpserver.RunAdmin(ctx, httpserver.Config{
 		Addr:    cfg.Addr,
 		Handler: handler,
@@ -72,19 +77,30 @@ func run() error {
 	})
 }
 
-// buildHandler serves the embedded SPA bundle. A real application replaces
-// this with its own handler-building package, adding the application's own
-// API routes and whatever middleware govue pieces it needs. Health,
-// readiness and metrics never live here; see buildAdminHandler.
-func buildHandler() (http.Handler, error) {
+// buildHandler serves the owner API and the embedded SPA bundle, see
+// internal/webapp. Health, readiness and metrics never live here; see
+// buildAdminHandler.
+func buildHandler(logger *slog.Logger, owners owner.Store, resolve owner.Resolver) (http.Handler, error) {
 	dist, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		return nil, fmt.Errorf("wishlist: %w", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServerFS(dist))
-	return mux, nil
+	handler, err := webapp.Handler(webapp.Config{
+		Store: owners,
+		Owner: resolve,
+		// No session exists before the owner sign in (issue 4), so there is
+		// no token to derive: only the protector's origin check applies.
+		// Issue 4 supplies the function that reads the session and returns
+		// csrf.Token(key, session.ID).
+		CSRFExpected: nil,
+		Dist:         dist,
+		Logger:       logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wishlist: %w", err)
+	}
+	return handler, nil
 }
 
 // buildAdminHandler serves liveness, readiness and a Prometheus scrape on

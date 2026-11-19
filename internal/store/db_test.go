@@ -532,6 +532,82 @@ func orderOf(t *testing.T, f fixture, includeArchived bool) []int64 {
 	return ids
 }
 
+func TestMoveWishToList(t *testing.T) {
+	f := seed(t, newCore(t))
+	o := f.owners()
+	ctx := t.Context()
+
+	target, err := o.CreateList(ctx, f.owner.ID, ListInput{Title: "Christmas"})
+	if err != nil {
+		t.Fatalf("CreateList() error = %v", err)
+	}
+	first, err := o.CreateWish(ctx, f.owner.ID, target.ID, WishInput{Title: "Existing"})
+	if err != nil {
+		t.Fatalf("CreateWish() error = %v", err)
+	}
+	if err := o.SetWishArchived(ctx, f.owner.ID, f.wish.ID, true); err != nil {
+		t.Fatalf("SetWishArchived() error = %v", err)
+	}
+
+	other, err := o.UpsertOwner(ctx, "subject-3", "mallory", "", "")
+	if err != nil {
+		t.Fatalf("UpsertOwner() error = %v", err)
+	}
+	foreign, err := o.CreateList(ctx, other.ID, ListInput{Title: "Theirs"})
+	if err != nil {
+		t.Fatalf("CreateList() error = %v", err)
+	}
+
+	t.Run("a foreign list, a foreign wish and a missing list are all ErrNotFound", func(t *testing.T) {
+		for name, err := range map[string]error{
+			"foreign list":                          o.MoveWishToList(ctx, f.owner.ID, f.wish.ID, foreign.ID),
+			"foreign wish":                          o.MoveWishToList(ctx, other.ID, f.wish.ID, foreign.ID),
+			"missing list":                          o.MoveWishToList(ctx, f.owner.ID, f.wish.ID, 999999),
+			"missing wish":                          o.MoveWishToList(ctx, f.owner.ID, 999999, target.ID),
+			"foreign owner, foreign wish, own list": o.MoveWishToList(ctx, other.ID, f.wish.ID, target.ID),
+		} {
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("%s = %v, want ErrNotFound", name, err)
+			}
+		}
+		if w, err := o.Wish(ctx, f.owner.ID, f.wish.ID); err != nil || w.ListID != f.list.ID {
+			t.Errorf("wish = %+v, %v, want it still on its list", w, err)
+		}
+	})
+
+	t.Run("moving into its own list puts the wish last", func(t *testing.T) {
+		own, err := o.CreateList(ctx, f.owner.ID, ListInput{Title: "Own"})
+		if err != nil {
+			t.Fatalf("CreateList() error = %v", err)
+		}
+		firstOwn, err := o.CreateWish(ctx, f.owner.ID, own.ID, WishInput{Title: "First"})
+		if err != nil {
+			t.Fatalf("CreateWish() error = %v", err)
+		}
+		secondOwn, err := o.CreateWish(ctx, f.owner.ID, own.ID, WishInput{Title: "Second"})
+		if err != nil {
+			t.Fatalf("CreateWish() error = %v", err)
+		}
+		if err := o.MoveWishToList(ctx, f.owner.ID, firstOwn.ID, own.ID); err != nil {
+			t.Fatalf("MoveWishToList() error = %v", err)
+		}
+		got, err := o.Wishes(ctx, f.owner.ID, own.ID, true)
+		if err != nil || len(got) != 2 || got[0].ID != secondOwn.ID || got[1].ID != firstOwn.ID {
+			t.Errorf("wishes = %+v, %v, want the second one first and the moved one last", got, err)
+		}
+	})
+
+	t.Run("the wish goes to the end of the other list and keeps its flag", func(t *testing.T) {
+		if err := o.MoveWishToList(ctx, f.owner.ID, f.wish.ID, target.ID); err != nil {
+			t.Fatalf("MoveWishToList() error = %v", err)
+		}
+		w, err := o.Wish(ctx, f.owner.ID, f.wish.ID)
+		if err != nil || w.ListID != target.ID || w.Position <= first.Position || !w.Archived {
+			t.Errorf("wish = %+v, %v, want it on the target list after %d, still archived", w, err, first.Position)
+		}
+	})
+}
+
 func TestMoveWish(t *testing.T) {
 	t.Run("up and down", func(t *testing.T) {
 		f := seed(t, newCore(t))
