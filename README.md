@@ -83,6 +83,7 @@ docker compose up --build
 
 Builds the multi-stage `Dockerfile` (frontend, static Go binary, then a minimal non-root
 runtime stage with no shell) and serves the site at `http://localhost:8080`.
+The published image targets `linux/amd64` and `linux/arm64` through one manifest list.
 `docker-compose.yaml` is for local development only; see `charts/wishlist/README.md` for a
 cluster installation.
 
