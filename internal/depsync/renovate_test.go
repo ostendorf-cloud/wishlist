@@ -25,6 +25,7 @@ type renovateConfig struct {
 	} `json:"customManagers"`
 	PackageRules []struct {
 		MatchPackageNames []string          `json:"matchPackageNames"`
+		MatchManagers     []string          `json:"matchManagers"`
 		GroupName         string            `json:"groupName"`
 		Constraints       map[string]string `json:"constraints"`
 	} `json:"packageRules"`
@@ -91,6 +92,34 @@ func TestRenovateGroupsGovueHalves(t *testing.T) {
 	}
 	if pin := misePnpm(t); constraint != pin {
 		t.Errorf("constraints.pnpm is %q, mise.toml pins %q: they move together", constraint, pin)
+	}
+}
+
+// TestRenovateGroupsPnpmPins fails when renovate.json no longer groups the pnpm pin of
+// mise.toml with the govue rule's constraints.pnpm. Without the group a pnpm bump of
+// mise.toml alone breaks TestRenovateGroupsGovueHalves.
+func TestRenovateGroupsPnpmPins(t *testing.T) {
+	t.Parallel()
+
+	cfg := readRenovateConfig(t)
+
+	found := 0
+	for _, rule := range cfg.PackageRules {
+		if !slices.Equal(rule.MatchPackageNames, []string{"pnpm"}) {
+			continue
+		}
+		found++
+		for _, manager := range []string{"mise", "renovate-config"} {
+			if !slices.Contains(rule.MatchManagers, manager) {
+				t.Errorf("pnpm rule matchManagers = %v, want it to contain %q", rule.MatchManagers, manager)
+			}
+		}
+		if rule.GroupName != "pnpm" {
+			t.Errorf("pnpm rule group name = %q, want pnpm", rule.GroupName)
+		}
+	}
+	if found != 1 {
+		t.Fatalf("want exactly one packageRules entry matching package pnpm, got %d", found)
 	}
 }
 

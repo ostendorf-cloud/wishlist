@@ -58,8 +58,9 @@ half of a govue release and not the other half, silently. `task check:govue-vers
 Renovate raises both halves in one pull request, group `govue` in `renovate.json`. A regex
 custom manager reads the tag from `web/package.json`, because Renovate's npm manager skips
 the `&path:/web` specifier. The shared preset `govue-lockfile` regenerates
-`web/pnpm-lock.yaml`. The group's `constraints.pnpm` equals the pin in `mise.toml`: move both
-together. `internal/depsync/renovate_test.go` fails when one of these drifts.
+`web/pnpm-lock.yaml`. The group's `constraints.pnpm` equals the pin in `mise.toml`, and the
+group `pnpm` in `renovate.json` moves both in one pull request.
+`internal/depsync/renovate_test.go` fails when one of these drifts.
 
 ## The store boundary
 
