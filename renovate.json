@@ -36,6 +36,11 @@
       "matchPackageNames": ["pnpm"],
       "matchManagers": ["mise", "custom.regex", "renovate-config"],
       "groupName": "pnpm"
+    },
+    {
+      "description": "TypeScript stays below 7 until typescript-eslint and vue-tsc support it: typescript-eslint rejects 7.0 at import and vue-tsc 3.x needs typescript/lib/tsc, which 7 no longer exports. Remove this rule when both release 7 support.",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
     }
   ]
 }
