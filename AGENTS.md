@@ -55,6 +55,12 @@ pnpm git dependency must always name the same tag: a mismatch means this reposit
 half of a govue release and not the other half, silently. `task check:govue-version`
 (`internal/depsync`) enforces this, the same way `ostendorf.tech` does.
 
+Renovate raises both halves in one pull request, group `govue` in `renovate.json`. A regex
+custom manager reads the tag from `web/package.json`, because Renovate's npm manager skips
+the `&path:/web` specifier. The shared preset `govue-lockfile` regenerates
+`web/pnpm-lock.yaml`. The group's `constraints.pnpm` equals the pin in `mise.toml`: move both
+together. `internal/depsync/renovate_test.go` fails when one of these drifts.
+
 ## The store boundary
 
 The store has two sides that share only the pool. `Core` owns `Open`, `Close`, `Ping` and
