@@ -5,8 +5,9 @@ go = "1.27.4"
 task = "3"
 # The web/ package. pnpm is the package manager, so npm is never called directly.
 # pnpm is pinned to the patch, not the major: the Dockerfile's frontend stage installs
-# one literal version, and the lockfile that stage reads with --frozen-lockfile has to
-# have been written by the same one. A floating major silently drifts the two apart.
+# the version of its PNPM_VERSION argument, and the lockfile that stage reads with
+# --frozen-lockfile has to have been written by the same one. A floating major silently
+# drifts the two apart.
 node = "26"
 pnpm = "12.23.0"
 # Pinned to the patch, not "2": a golangci-lint release is built against one Go patch and

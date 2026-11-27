@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -28,6 +29,8 @@ type renovateConfig struct {
 		MatchManagers     []string          `json:"matchManagers"`
 		GroupName         string            `json:"groupName"`
 		Constraints       map[string]string `json:"constraints"`
+		AllowedVersions   string            `json:"allowedVersions"`
+		Description       string            `json:"description"`
 	} `json:"packageRules"`
 }
 
@@ -109,7 +112,7 @@ func TestRenovateGroupsPnpmPins(t *testing.T) {
 			continue
 		}
 		found++
-		for _, manager := range []string{"mise", "renovate-config"} {
+		for _, manager := range []string{"mise", "custom.regex", "renovate-config"} {
 			if !slices.Contains(rule.MatchManagers, manager) {
 				t.Errorf("pnpm rule matchManagers = %v, want it to contain %q", rule.MatchManagers, manager)
 			}
@@ -120,6 +123,33 @@ func TestRenovateGroupsPnpmPins(t *testing.T) {
 	}
 	if found != 1 {
 		t.Fatalf("want exactly one packageRules entry matching package pnpm, got %d", found)
+	}
+}
+
+// TestRenovateHoldsTypeScriptBelowSeven fails when renovate.json no longer keeps
+// TypeScript below 7, or the rule loses the description that names when to remove it.
+// typescript-eslint rejects 7.0 at import and vue-tsc 3.x needs typescript/lib/tsc, which
+// 7 no longer exports, so a bump to 7 breaks lint and the type check.
+func TestRenovateHoldsTypeScriptBelowSeven(t *testing.T) {
+	t.Parallel()
+
+	cfg := readRenovateConfig(t)
+
+	found := 0
+	for _, rule := range cfg.PackageRules {
+		if !slices.Equal(rule.MatchPackageNames, []string{"typescript"}) {
+			continue
+		}
+		found++
+		if rule.AllowedVersions != "<7" {
+			t.Errorf("typescript rule allowedVersions = %q, want %q", rule.AllowedVersions, "<7")
+		}
+		if !strings.Contains(rule.Description, "Remove this rule when") {
+			t.Errorf("typescript rule description = %q, want it to name when to remove the rule", rule.Description)
+		}
+	}
+	if found != 1 {
+		t.Fatalf("want exactly one packageRules entry matching package typescript, got %d", found)
 	}
 }
 
