@@ -14,6 +14,14 @@
       ],
       "depNameTemplate": "ostendorf-cloud/govue",
       "datasourceTemplate": "github-tags"
+    },
+    {
+      "description": "The Dockerfile's Node stage installs pnpm through corepack at the version of its PNPM_VERSION argument, which Renovate's Dockerfile manager does not read. This manager reads the argument under its renovate comment, so it moves with the mise.toml pin.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nARG PNPM_VERSION=(?<currentValue>\\S+)"
+      ]
     }
   ],
   "packageRules": [
@@ -24,9 +32,9 @@
       "constraints": { "pnpm": "12.23.0" }
     },
     {
-      "description": "pnpm is pinned in mise.toml (mise manager) and in the govue rule's constraints.pnpm, which Renovate reads itself as a tool constraint (renovate-config manager). Both move in one pull request: internal/depsync's TestRenovateGroupsGovueHalves fails when the constraint and mise.toml differ.",
+      "description": "pnpm is pinned in mise.toml (mise manager), in the Dockerfile's PNPM_VERSION (the regex manager above) and in the govue rule's constraints.pnpm, which Renovate reads itself as a tool constraint (renovate-config manager). All three move in one pull request: internal/depsync's TestRenovateGroupsGovueHalves and TestDockerfilePnpmMatchesMise fail when one differs from mise.toml, because the image must read the lockfile with the pnpm that wrote it.",
       "matchPackageNames": ["pnpm"],
-      "matchManagers": ["mise", "renovate-config"],
+      "matchManagers": ["mise", "custom.regex", "renovate-config"],
       "groupName": "pnpm"
     }
   ]

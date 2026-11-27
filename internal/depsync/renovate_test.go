@@ -109,7 +109,7 @@ func TestRenovateGroupsPnpmPins(t *testing.T) {
 			continue
 		}
 		found++
-		for _, manager := range []string{"mise", "renovate-config"} {
+		for _, manager := range []string{"mise", "custom.regex", "renovate-config"} {
 			if !slices.Contains(rule.MatchManagers, manager) {
 				t.Errorf("pnpm rule matchManagers = %v, want it to contain %q", rule.MatchManagers, manager)
 			}
