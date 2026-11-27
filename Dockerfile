@@ -20,7 +20,7 @@ WORKDIR /src/web
 # version below, the exact one mise.toml's "pnpm" tool resolves to, so the
 # lockfile this stage reads was written by the same pnpm a local "task setup"
 # installs.
-RUN npm install -g corepack@0.36.0 && corepack enable && corepack prepare pnpm@12.19.0 --activate
+RUN npm install -g corepack@0.36.0 && corepack enable && corepack prepare pnpm@12.23.0 --activate
 
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
