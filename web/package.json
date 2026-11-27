@@ -15,7 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ostendorf-cloud/govue": "ostendorf-cloud/govue#v0.5.0&path:/web",
+    "@ostendorf-cloud/govue": "ostendorf-cloud/govue#v0.12.0&path:/web",
     "tailwindcss": "^4.3.3",
     "vue": "^3.5.44",
     "vue-router": "^5.0.0"
