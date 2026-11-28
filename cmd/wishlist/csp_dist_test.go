@@ -307,5 +307,19 @@ func TestTheEmbeddedSPAIsServedWithThePolicy(t *testing.T) {
 		if got := nonceRe.ReplaceAllString(csp, "'nonce-X'"); got != wantPolicy {
 			t.Errorf("GET %s: CSP = %q, want %q", target, got, wantPolicy)
 		}
+		// The boot script is the one inline script, injected at serve time with
+		// the nonce of this response. The built files above hold none.
+		nonce := regexp.MustCompile(`'nonce-([A-Za-z0-9+/=_-]{16,})'`).FindStringSubmatch(csp)
+		if nonce == nil {
+			t.Errorf("GET %s: no nonce in %q", target, csp)
+			continue
+		}
+		body := rec.Body.String()
+		if want := `<script nonce="` + nonce[1] + `">`; !strings.Contains(body, want) {
+			t.Errorf("GET %s: the page carries no %s", target, want)
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("GET %s: Cache-Control = %q, want no-store", target, got)
+		}
 	}
 }

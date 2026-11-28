@@ -16,8 +16,12 @@ import (
 // This package writes responses on the public mux, outside the owner API and
 // its response walk (internal/webapp/owner/blindness_test.go). It stays safe
 // because it cannot reach the store or anything else of this module: it may
-// import the standard library and govue's language package only.
-const allowedModuleImport = "github.com/ostendorf-cloud/govue/language"
+// import the standard library and govue's language and themeboot packages
+// only.
+var allowedModuleImports = map[string]bool{
+	"github.com/ostendorf-cloud/govue/language":  true,
+	"github.com/ostendorf-cloud/govue/themeboot": true,
+}
 
 func TestThePackageImportsNothingOfThisModule(t *testing.T) {
 	files, err := filepath.Glob("*.go")
@@ -45,8 +49,8 @@ func TestThePackageImportsNothingOfThisModule(t *testing.T) {
 			}
 			first, _, _ := strings.Cut(path, "/")
 			standard := !strings.Contains(first, ".")
-			if !standard && path != allowedModuleImport {
-				t.Errorf("%s imports %q: only the standard library and %s are allowed", name, path, allowedModuleImport)
+			if !standard && !allowedModuleImports[path] {
+				t.Errorf("%s imports %q: only the standard library and govue's language and themeboot packages are allowed", name, path)
 			}
 		}
 	}

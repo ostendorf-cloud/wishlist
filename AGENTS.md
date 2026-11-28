@@ -184,8 +184,8 @@ serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on 
   allows exactly `ownerAPI.Register`, `legal.Register`, `middleware.Chain` and the account
   routes' `cfg.Auth.Mount` (`internal/auth`, matched by the full selector chain) to receive
   the mux in `internal/webapp`, and `internal/legal/boundary_test.go` limits that package to
-  the standard library and `govue/language`, so it can never reach the store. A third helper
-  or an import of this module there fails a test.
+  the standard library, `govue/language` and `govue/themeboot`, so it can never reach the
+  store. A third helper or an import of this module there fails a test.
 - `TestNothingUnderWebappReachesTheGuestSide` is the handler layer rule of the store boundary:
   code under `internal/webapp` may name only `OwnerStore`, `ErrNotFound`, `List`, `Wish`,
   `ListInput` and `WishInput` of the store, and never `Guests`, `Owners`, `Core` or
@@ -333,11 +333,13 @@ allows no other code there to take a `ResponseWriter`. The admin listener is not
 - Why nothing is widened: the build writes `index.html` with one module script and one
   stylesheet as files, the prerendered legal pages the same, and no `style` attribute or inline
   script (checked against the built output). Vue sets runtime styles through the CSSOM, which
-  `style-src` does not restrict. govue's theme boot script would be injected at serve time with
-  the response nonce (`themeboot.Inject` and `middleware.Nonce`), so it needs no hash and no
-  `unsafe-inline`. No code injects it yet. Once it exists, both servers need it: `spa()` in
-  `webapp.go` and `internal/legal` for the prerendered pages. `themeboot.Shell` sets no-store,
-  `Inject` alone does not. A page that carries a nonce must never be cached.
+  `style-src` does not restrict. govue's theme boot script is injected at serve time with the
+  response nonce (`themeboot.Shell`, which uses `middleware.Nonce`), so it needs no hash and no
+  `unsafe-inline`. Both servers do it: `spa()` in `webapp.go` for the shell and
+  `internal/legal` for the prerendered pages. `themeboot.Shell` sets no-store, because a page
+  that carries a nonce must never be cached. A HEAD request takes the same handler, so it
+  gets the headers and the length of the GET answer, and net/http drops the body. The static
+  files in `dist/` stay free of inline script.
 - HSTS is `max-age=31536000` only: no `includeSubDomains`, no `preload` (owner decision).
   govue's `DefaultSecurity` sends a longer value (one year, subdomains, preload), so
   `internal/secheaders` sets `HSTS = 0` on govue's `Security`, which omits govue's header, and

@@ -132,7 +132,6 @@ func TestTheSPAIsServedForItsRoutesOnly(t *testing.T) {
 		{"a list of the SPA", "GET", "/lists/3", 200, "spa", ""},
 		{"a new list", "GET", "/lists/new", 200, "spa", ""},
 		{"a wish form", "GET", "/wishes/4/edit", 200, "spa", ""},
-		{"HEAD of an SPA route", "HEAD", "/lists/3", 200, "", "spa"},
 		// vue-router matches case insensitively, so the server does too.
 		{"an SPA route in upper case", "GET", "/LISTS/3", 200, "spa", ""},
 		{"an SPA route in mixed case", "GET", "/Wishes/4/Edit", 200, "spa", ""},
