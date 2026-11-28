@@ -43,6 +43,7 @@ The binary reads its configuration from the environment; see the Configuration t
 | `DB_USER` | Database role | required |
 | `DB_PASSWORD` or `DB_PASSWORD_FILE` | The role's password, directly or from a file. Never both | required |
 | `DB_SSLMODE` | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full` | `require` |
+| `DB_SSLROOTCERT` | Path of a PEM file with the root certificate that signed the server's certificate. Required for `verify-ca` and `verify-full`, optional for `require` (which then checks the chain like `verify-ca`), refused for `disable`, `allow` and `prefer` | unset |
 | `DB_MAX_CONNS` | Pool size per pod, 1 to 100 | `10` |
 | `DB_CONNECT_TIMEOUT` | One attempt to open a connection, 1s to 1m | `5s` |
 | `SITE_URL` | Public origin of the site; its bare host is sent to Umami as the hostname | `https://my-wishes.de` |
@@ -50,6 +51,13 @@ The binary reads its configuration from the environment; see the Configuration t
 | `UMAMI_URL` | Base URL of a Umami instance; page views are reported to it from the server | unset |
 | `UMAMI_WEBSITE_ID` | Umami website id (a UUID) | unset |
 | `UMAMI_TIMEOUT`, `UMAMI_QUEUE_SIZE` | Optional govue settings: post timeout and queue size | `5s`, `256` |
+
+A deployment should use `DB_SSLMODE=verify-full` with `DB_SSLROOTCERT`: the service then checks
+that the server's certificate is signed by that root and names the host it connects to. `require`
+encrypts the connection and checks nothing, so anybody on the path can pose as the database.
+`verify-ca` checks the signature and not the host name. `DB_SSLROOTCERT` is read once at start,
+and a file that is missing or holds no PEM certificate stops the start with the variable named.
+Client certificates are not supported.
 
 Every secret-shaped variable has a `_FILE` twin. The schema is applied at startup, and
 `/readyz` stays unready until the database is reachable and the schema is applied.
