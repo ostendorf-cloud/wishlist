@@ -47,7 +47,7 @@ const storePath = "github.com/ostendorf-cloud/wishlist/internal/store"
 // interface, no opaque encoding, no free form bytes or string map) is the
 // real guard, and review of every new DTO field is the last one.
 var blindName = regexp.MustCompile(
-	`(?i)reserv|guest|taken|bought|pledge|claim|purchas|book|contrib|donor|amount_?cents`)
+	`(?i)reserv|guest|taken|bought|pledge|claim|purchas|book|contrib|donor|donat|giver|gift_?by|amount_?cents`)
 
 // allowedNames are the fields that match blindName and are harmless: the
 // owner's own setting of whether guests may still take wishes. A value, not
@@ -203,9 +203,21 @@ type (
 	booked      struct{ Booking int }
 	contributor struct{ Contributors []string }
 	donated     struct{ AmountCents int64 }
-	rawBytes    struct{ Blob []byte }
-	stringMap   struct{ Labels map[string]string }
-	fine        struct {
+	donation    struct{ Donation int64 }
+	donatedBy   struct {
+		Who string `json:"donated_by"`
+	}
+	giver    struct{ Giver string }
+	giftedBy struct{ GiftBy string }
+	giftBy   struct {
+		Who string `json:"gift_by"`
+	}
+	groupGift struct {
+		GroupGift bool `json:"group_gift"`
+	}
+	rawBytes  struct{ Blob []byte }
+	stringMap struct{ Labels map[string]string }
+	fine      struct {
 		A int
 		T time.Time
 		P *int64
@@ -242,6 +254,12 @@ func TestTheWalkCatchesEveryWayAReservationCanGetOut(t *testing.T) {
 		{"field booking", reflect.TypeFor[booked](), true},
 		{"field contributors", reflect.TypeFor[contributor](), true},
 		{"field amount cents", reflect.TypeFor[donated](), true},
+		{"field donation", reflect.TypeFor[donation](), true},
+		{"json name donated_by", reflect.TypeFor[donatedBy](), true},
+		{"field giver", reflect.TypeFor[giver](), true},
+		{"field GiftBy", reflect.TypeFor[giftedBy](), true},
+		{"json name gift_by", reflect.TypeFor[giftBy](), true},
+		{"group_gift is a setting of the list, not a name of a giver", reflect.TypeFor[groupGift](), false},
 		{"raw bytes", reflect.TypeFor[rawBytes](), true},
 		{"string map", reflect.TypeFor[stringMap](), true},
 		{"json dash hides the field from the wire", reflect.TypeFor[ignoredField](), false},
@@ -262,39 +280,92 @@ func TestTheWalkCatchesEveryWayAReservationCanGetOut(t *testing.T) {
 var writers = []string{
 	"Write", "WriteHeader", "WriteString", "NoContent", "NewEncoder", "Marshal",
 	"MarshalIndent", "Fprint", "Fprintf", "Fprintln", "WithDetails",
+	// A body copied from a reader, or served as a file, reaches the response
+	// without going through Write in this package's own code.
+	"Copy", "CopyN", "CopyBuffer", "ReadFrom", "ServeContent", "ServeFile", "ServeFileFS",
+}
+
+// writerFindings returns what in file writes a response around the typed
+// adapter, one line each. path is the file's name as webappFiles spells it.
+// Allowed apart from the adapter: WithDetails in fieldProblem (validate.go),
+// and in webapp.go the refusal of the CSRF protector (api.WriteError) and the
+// SPA, which writes no bytes itself.
+func writerFindings(path string, file *ast.File) []string {
+	var found []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if x.Sel.Name == "WithDetails" && path == "validate.go" {
+				return true
+			}
+			if slices.Contains(writers, x.Sel.Name) && path != "owner.go" {
+				found = append(found, path+": "+x.Sel.Name+" writes around the typed adapter")
+			}
+			if id, ok := x.X.(*ast.Ident); ok && id.Name == "http" && x.Sel.Name == "Error" {
+				found = append(found, path+": http.Error writes around the typed adapter")
+			}
+		case *ast.Ident:
+			// A handler returns a value. Only the adapter, the CSRF refusal
+			// and the SPA in webapp.go touch a ResponseWriter.
+			if x.Name == "ResponseWriter" && path != "owner.go" && path != filepath.Join("..", "webapp.go") {
+				found = append(found, path+": handlers must return a value, not take a ResponseWriter")
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// The mutation proof of the scan: a body written through any of these ways,
+// inside the SPA handler or in a wrapper around the mux, fails it.
+func TestTheWriterScanCatchesEveryWayToPutBytesOnAResponse(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		body string
+		want int
+	}{
+		{
+			"io.Copy in the SPA handler", filepath.Join("..", "webapp.go"),
+			`io.Copy(w, strings.NewReader(row.ReservedBy))`, 1,
+		},
+		{"io.CopyN in a wrapper", "wrap.go", `io.CopyN(w, r, 10)`, 1},
+		{"io.CopyBuffer in a wrapper", "wrap.go", `io.CopyBuffer(w, r, nil)`, 1},
+		{"ReadFrom of the writer", "wrap.go", `w.(io.ReaderFrom).ReadFrom(r)`, 1},
+		{
+			"http.ServeContent", filepath.Join("..", "webapp.go"),
+			`http.ServeContent(w, r, "x", time.Time{}, rd)`, 1,
+		},
+		{"http.ServeFile", "wrap.go", `http.ServeFile(w, r, "x")`, 1},
+		{"http.ServeFileFS", "wrap.go", `http.ServeFileFS(w, r, dist, "x")`, 1},
+		{"Write", "wrap.go", `w.Write(b)`, 1},
+		{"the adapter may write", "owner.go", `io.Copy(w, rd)`, 0},
+		{"a plain call is fine", "wrap.go", `fmt.Sprint(1)`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "package x\nfunc f() {\n\t" + tc.body + "\n}\n"
+			file, err := parser.ParseFile(token.NewFileSet(), tc.path, src, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := writerFindings(tc.path, file); len(got) != tc.want {
+				t.Errorf("writerFindings = %v, want %d finding(s)", got, tc.want)
+			}
+		})
+	}
 }
 
 // The adapter in owner/owner.go is the only place a body is written; the
 // route table names its type, and the reflection walk reads that type. This
-// keeps anything under internal/webapp from writing around it. Allowed apart
-// from the adapter: WithDetails in fieldProblem (validate.go), which holds the
-// details of an error to field names and codes, and in webapp.go only the
-// refusal of the CSRF protector (api.WriteError) and the SPA, which writes no
-// bytes itself.
+// keeps anything under internal/webapp from writing around it. The
+// exceptions are in writerFindings.
 func TestOnlyTheAdapterWritesAResponse(t *testing.T) {
 	files := webappFiles(t)
 	for path, file := range files {
-		ast.Inspect(file, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.SelectorExpr:
-				if x.Sel.Name == "WithDetails" && path == "validate.go" {
-					return true
-				}
-				if slices.Contains(writers, x.Sel.Name) && path != "owner.go" {
-					t.Errorf("%s: %s writes around the typed adapter", path, x.Sel.Name)
-				}
-				if id, ok := x.X.(*ast.Ident); ok && id.Name == "http" && x.Sel.Name == "Error" {
-					t.Errorf("%s: http.Error writes around the typed adapter", path)
-				}
-			case *ast.Ident:
-				// A handler returns a value. Only the adapter, the CSRF refusal
-				// and the SPA in webapp.go touch a ResponseWriter.
-				if x.Name == "ResponseWriter" && path != "owner.go" && path != filepath.Join("..", "webapp.go") {
-					t.Errorf("%s: handlers must return a value, not take a ResponseWriter", path)
-				}
-			}
-			return true
-		})
+		for _, finding := range writerFindings(path, file) {
+			t.Error(finding)
+		}
 	}
 }
 
