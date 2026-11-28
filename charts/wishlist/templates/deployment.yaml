@@ -32,6 +32,20 @@ spec:
   {{- if gt (int .Values.replicaCount) 1 }}
   {{ fail "replicaCount cannot be above 1: sessions are kept in the memory of the process, so a second replica would not know them. Scaling out needs a shared session store in the service first." }}
   {{- end }}
+  {{/*
+  The root certificate and the mode go together, as in the service's own
+  config: verify-ca and verify-full need a root to verify against, and the
+  modes that never verify would ignore it. The service refuses both at start,
+  this guard says so at render time instead.
+  */}}
+  {{- $sslMode := .Values.database.sslMode }}
+  {{- $sslRoot := .Values.database.sslRootCert.secretName }}
+  {{- if and (has $sslMode (list "verify-ca" "verify-full")) (not $sslRoot) }}
+  {{ fail (printf "database.sslRootCert.secretName is required when database.sslMode is %s: the server certificate is checked against that root. For CloudNativePG it is the Secret \"<cluster>-ca\", key \"ca.crt\"." $sslMode) }}
+  {{- end }}
+  {{- if and (has $sslMode (list "disable" "allow" "prefer")) $sslRoot }}
+  {{ fail (printf "database.sslRootCert.secretName cannot be set when database.sslMode is %s: that mode never verifies the server certificate, so the root would be ignored." $sslMode) }}
+  {{- end }}
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
@@ -77,6 +91,10 @@ spec:
               value: {{ required "database.user is required" .Values.database.user | quote }}
             - name: DB_SSLMODE
               value: {{ .Values.database.sslMode | quote }}
+            {{- with .Values.database.sslRootCert.secretName }}
+            - name: DB_SSLROOTCERT
+              value: /etc/wishlist/database-ca/{{ required "database.sslRootCert.key is required" $.Values.database.sslRootCert.key }}
+            {{- end }}
             - name: DB_MAX_CONNS
               value: {{ .Values.database.maxConns | quote }}
             - name: DB_CONNECT_TIMEOUT
@@ -107,6 +125,11 @@ spec:
             - name: database
               mountPath: /etc/wishlist/database
               readOnly: true
+            {{- if .Values.database.sslRootCert.secretName }}
+            - name: database-ca
+              mountPath: /etc/wishlist/database-ca
+              readOnly: true
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -147,6 +170,17 @@ spec:
             items:
               - key: {{ .Values.database.existingSecret.passwordKey }}
                 path: {{ .Values.database.existingSecret.passwordKey }}
+        {{- with .Values.database.sslRootCert.secretName }}
+        # Only the certificate key is projected: a CloudNativePG CA Secret also
+        # holds the CA's private key, which this pod must never see.
+        - name: database-ca
+          secret:
+            secretName: {{ . }}
+            defaultMode: 0444
+            items:
+              - key: {{ required "database.sslRootCert.key is required" $.Values.database.sslRootCert.key }}
+                path: {{ $.Values.database.sslRootCert.key }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

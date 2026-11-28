@@ -38,9 +38,18 @@ never an environment value. The rest of the connection (`database.host`, `port`,
 CloudNativePG cluster named `wishlist-postgres`, bootstrapped without custom names: host
 `wishlist-postgres-rw`, database and role `app`, password in the Secret
 `wishlist-postgres-app` under the key `password`. Set the values when the cluster differs. The
-chart creates no database. `database.sslMode` defaults to `require`, which encrypts and does not
-verify the server certificate: verifying it (`verify-full`) needs a root certificate setting
-that the service does not have yet.
+chart creates no database.
+
+`database.sslMode` defaults to `verify-full`: the service checks that the server certificate is
+signed by a root it trusts and names the host. The root comes from
+`database.sslRootCert.secretName` and `key`, default the CloudNativePG cluster CA Secret
+`wishlist-postgres-ca` and its key `ca.crt`. The chart mounts only that key, read only, under
+`/etc/wishlist/database-ca` and sets `DB_SSLROOTCERT`. The CA Secret of a CloudNativePG cluster
+also holds the CA's private key, which is never projected into the pod. The render fails for
+`verify-ca` or `verify-full` without a Secret name, and for `disable`, `allow` or `prefer` with
+one. `require` encrypts and checks nothing unless a root is set, which makes it check the
+chain. With `verify-full` `database.host` must be a name the server certificate carries. An IP
+address usually is not one.
 
 `/readyz` reports unready while the database is unreachable or the schema is not applied
 yet, so a pod without a database receives no traffic. `/healthz` does not depend on it.
