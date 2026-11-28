@@ -400,7 +400,9 @@ const foreignKeyViolation = "23503"
 // puts it last. Two moves into one list at the same moment may pick the same
 // position, which is harmless: the id breaks the tie when the list is read.
 // A list deleted between the check and the write is a foreign key violation
-// (23503) and is ErrNotFound as well.
+// (23503) and is ErrNotFound as well. The reservations of the wish are not
+// touched and move along with it. The guest milestone decides whether that
+// stays, see AGENTS.md "Refusals".
 func (s *OwnerStore) MoveWishToList(ctx context.Context, ownerID, wishID, listID int64) error {
 	tag, err := s.pool.Exec(ctx, `
 		update wishes w

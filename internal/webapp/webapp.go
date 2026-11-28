@@ -191,10 +191,16 @@ func Handler(cfg Config) (http.Handler, error) {
 // TestSPARoutesCoverTheRouter keeps this list and the router in step.
 var spaRoutes = []string{"/lists", "/wishes", "/login", "/signup"}
 
+// isSPARoute compares without regard to case, because the router in
+// web/src/router.ts does: vue-router matches paths case insensitively unless a
+// route sets sensitive, and none does. A reload of /LISTS/3 then shows the
+// same page as a click on a link to it. Built files stay case sensitive, they
+// are looked up before this runs.
 func isSPARoute(p string) bool {
 	if path.Ext(p) != "" {
 		return false
 	}
+	p = strings.ToLower(p)
 	for _, prefix := range spaRoutes {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			return true

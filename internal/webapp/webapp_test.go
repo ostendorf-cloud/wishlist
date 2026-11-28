@@ -133,6 +133,13 @@ func TestTheSPAIsServedForItsRoutesOnly(t *testing.T) {
 		{"a new list", "GET", "/lists/new", 200, "spa", ""},
 		{"a wish form", "GET", "/wishes/4/edit", 200, "spa", ""},
 		{"HEAD of an SPA route", "HEAD", "/lists/3", 200, "", "spa"},
+		// vue-router matches case insensitively, so the server does too.
+		{"an SPA route in upper case", "GET", "/LISTS/3", 200, "spa", ""},
+		{"an SPA route in mixed case", "GET", "/Wishes/4/Edit", 200, "spa", ""},
+		{"login in upper case", "GET", "/LOGIN", 200, "spa", ""},
+		{"a built file is case sensitive", "GET", "/Assets/app.js", 404, "", "spa"},
+		{"upper case does not make a prefix a route", "GET", "/LISTSX", 404, "", "spa"},
+		{"an API path in upper case is not the SPA", "GET", "/API/v1/owner/lists", 404, "", "spa"},
 		{"a built file", "GET", "/assets/app.js", 200, "js", ""},
 		{"a missing asset", "GET", "/assets/x.js", 404, "", "spa"},
 		{"a missing file in an SPA route", "GET", "/lists/3.js", 404, "", "spa"},

@@ -153,7 +153,7 @@ field and every value one of the three codes.
 `blindness_test.go` walks each response type: struct fields (embedded too), pointers, slices,
 arrays and maps. It fails on any named type of `internal/store` (which covers `Reservation`,
 `GuestWish`, `GuestList` and whatever is added to `guest.go` later), on a type or field whose Go
-or JSON name matches `reserv|guest|taken|bought|pledge|claim|purchas|book|contrib|donor|amount_?cents`
+or JSON name matches `reserv|guest|taken|bought|pledge|claim|purchas|book|contrib|donor|donat|giver|gift_?by|amount_?cents`
 (a heuristic: the typed walk is the real guard), on an interface (an `any` field is a
 violation), a func or a channel, on a `[]byte` or `map[string]string` field, and on a type with
 its own JSON or text encoding, which would hide its fields.
@@ -166,7 +166,11 @@ serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on 
   list short and reviewed.
 - Response types are explicit copies in `owner/dto`. A store struct is never sent as it is,
   and `owner/dto` must not import the store.
-- `TestOnlyTheAdapterWritesAResponse` keeps handlers from writing around the adapter.
+- `TestOnlyTheAdapterWritesAResponse` keeps handlers from writing around the adapter. Its
+  writer list holds `Write`, `Fprint*`, `io.Copy` and its variants, `ReadFrom`,
+  `http.ServeContent` and `http.ServeFile`, in every file under `internal/webapp`, so the SPA
+  handler and a wrapper around the mux are covered too. `TestTheWriterScanCatchesEveryWayToPutBytesOnAResponse`
+  proves each one fails.
 - `internal/legal` is the one writer outside the adapter on the public mux (the legal
   redirects and the four prerendered pages, no data). `TestOnlyKnownHelpersGetThePublicMux`
   allows exactly `ownerAPI.Register`, `legal.Register`, `middleware.Chain` and the account
@@ -278,10 +282,21 @@ A row of somebody else, a row that does not exist and a malformed id are one ans
 the fixed body of `refusal` in `handlers.go`. A bad body is refused before the store is asked,
 so the answer to it does not depend on whether the row exists. The store scopes every query by
 owner id and returns `ErrNotFound` for a foreign row; `fail` maps only that to the refusal.
-Moving a wish to a list needs both rows to be the owner's.
+Moving a wish to a list needs both rows to be the owner's. A list deleted while the move runs
+is a foreign key violation (23503) and answers the same 404.
+
+A move keeps the wish row, so the reservations of that wish move along with it: they hang on the
+wish id and nothing in the move touches them. The owner cannot see that, and the guests' lists
+change under them. Whether a move should keep, refuse or drop reservations is decided by the
+guest milestone ("the HTTP API for share tokens, reserving and comments" under "Scope of this
+milestone"), which records it in `docs/adr/0001-blind-reservations.md` or a successor. Until
+then the move is unchanged.
 
 The public listener serves built files, and `index.html` only for GET and HEAD of the SPA's
 own routes (`spaRoutes` in `webapp.go`, kept in step with `web/src/router.ts` by a test).
+The route match ignores case, like vue-router, which matches case insensitively unless a route
+sets `sensitive`: a reload of `/LISTS/3` shows the page a click on its link shows. A built
+file is looked up first and stays case sensitive. `/API/...` is not the API and is a 404.
 Everything else is a 404: JSON under `/api/`, plain text elsewhere. `/metrics`, `/healthz` and
 `/readyz` are on the admin listener only, and `scripts/smoke-test-image.sh` pins that. A new
 top level route in the SPA needs its first segment in `spaRoutes`.
