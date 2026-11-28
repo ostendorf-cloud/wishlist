@@ -8,6 +8,7 @@ package store
 // loudly, and in CI they fail instead of skipping.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -606,6 +607,72 @@ func TestMoveWishToList(t *testing.T) {
 			t.Errorf("wish = %+v, %v, want it on the target list after %d, still archived", w, err, first.Position)
 		}
 	})
+}
+
+// The list is deleted while the move runs: the delete is open and holds the
+// row, the move reads the list as it was and writes the wish, and the foreign
+// key check at the end of the statement waits for the delete. When the delete
+// commits the check fails with 23503, which MoveWishToList answers as
+// ErrNotFound, the same as for a list that was gone before.
+func TestMoveWishToAListDeletedAtTheSameMomentIsNotFound(t *testing.T) {
+	f := seed(t, newCore(t))
+	o := f.owners()
+	ctx := t.Context()
+
+	target, err := o.CreateList(ctx, f.owner.ID, ListInput{Title: "Christmas"})
+	if err != nil {
+		t.Fatalf("CreateList() error = %v", err)
+	}
+	tx, err := f.core.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+	if _, err := tx.Exec(ctx, "delete from lists where id = $1", target.ID); err != nil {
+		t.Fatalf("delete list: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- o.MoveWishToList(ctx, f.owner.ID, f.wish.ID, target.ID) }()
+
+	// The move is stuck on the open delete once a session waits for a lock.
+	// Committing before that would only prove the case of a list that is gone.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		if err := f.core.pool.QueryRow(ctx,
+			"select count(*) from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'",
+		).Scan(&waiting); err != nil {
+			t.Fatalf("read lock waits: %v", err)
+		}
+		if waiting > 0 {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("MoveWishToList() returned %v before the delete committed", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the move never waited for the delete")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("MoveWishToList() = %v, want ErrNotFound", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("MoveWishToList() did not return after the delete committed")
+	}
+	if w, err := o.Wish(ctx, f.owner.ID, f.wish.ID); err != nil || w.ListID != f.list.ID {
+		t.Errorf("wish = %+v, %v, want it still on its list", w, err)
+	}
 }
 
 func TestMoveWish(t *testing.T) {
