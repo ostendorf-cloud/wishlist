@@ -277,7 +277,17 @@ func TestTheWalkCatchesEveryWayAReservationCanGetOut(t *testing.T) {
 }
 
 // writers are the selectors that put bytes on a response.
-var writers = []string{
+var writers = slices.Concat(writersBeforeTemplates, []string{
+	// A page rendered from a template, or a buffer drained into the writer,
+	// does not go through Write in this package's own code either. The theme
+	// boot script made such a page a real case: the shell is rendered on the
+	// way out. Flush sends what a wrapper holds back.
+	"Execute", "ExecuteTemplate", "WriteTo", "Flush",
+})
+
+// writersBeforeTemplates is the list as it stood before the theme boot script.
+// The test below keeps it to show what the longer list adds.
+var writersBeforeTemplates = []string{
 	"Write", "WriteHeader", "WriteString", "NoContent", "NewEncoder", "Marshal",
 	"MarshalIndent", "Fprint", "Fprintf", "Fprintln", "WithDetails",
 	// A body copied from a reader, or served as a file, reaches the response
@@ -291,6 +301,12 @@ var writers = []string{
 // and in webapp.go the refusal of the CSRF protector (api.WriteError) and the
 // SPA, which writes no bytes itself.
 func writerFindings(path string, file *ast.File) []string {
+	return findingsFor(writers, path, file)
+}
+
+// findingsFor is writerFindings with the list of writer names given, so a test
+// can run the scan with an older list.
+func findingsFor(names []string, path string, file *ast.File) []string {
 	var found []string
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -298,7 +314,7 @@ func writerFindings(path string, file *ast.File) []string {
 			if x.Sel.Name == "WithDetails" && path == "validate.go" {
 				return true
 			}
-			if slices.Contains(writers, x.Sel.Name) && path != "owner.go" {
+			if slices.Contains(names, x.Sel.Name) && path != "owner.go" {
 				found = append(found, path+": "+x.Sel.Name+" writes around the typed adapter")
 			}
 			if id, ok := x.X.(*ast.Ident); ok && id.Name == "http" && x.Sel.Name == "Error" {
@@ -339,8 +355,14 @@ func TestTheWriterScanCatchesEveryWayToPutBytesOnAResponse(t *testing.T) {
 		{"http.ServeFile", "wrap.go", `http.ServeFile(w, r, "x")`, 1},
 		{"http.ServeFileFS", "wrap.go", `http.ServeFileFS(w, r, dist, "x")`, 1},
 		{"Write", "wrap.go", `w.Write(b)`, 1},
+		{"Execute of a template", filepath.Join("..", "webapp.go"), `tmpl.Execute(w, row)`, 1},
+		{"ExecuteTemplate of a template set", "wrap.go", `set.ExecuteTemplate(w, "shell", row)`, 1},
+		{"WriteTo of a buffer", "wrap.go", `buf.WriteTo(w)`, 1},
+		{"Flush of the writer", "wrap.go", `w.(http.Flusher).Flush()`, 1},
 		{"the adapter may write", "owner.go", `io.Copy(w, rd)`, 0},
+		{"the adapter may execute a template", "owner.go", `tmpl.Execute(w, v)`, 0},
 		{"a plain call is fine", "wrap.go", `fmt.Sprint(1)`, 0},
+		{"handing the writer to another handler is fine", filepath.Join("..", "webapp.go"), `shell.ServeHTTP(w, r)`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -351,6 +373,37 @@ func TestTheWriterScanCatchesEveryWayToPutBytesOnAResponse(t *testing.T) {
 			}
 			if got := writerFindings(tc.path, file); len(got) != tc.want {
 				t.Errorf("writerFindings = %v, want %d finding(s)", got, tc.want)
+			}
+		})
+	}
+}
+
+// The earlier list let a template or a buffer write the response unseen. The
+// scan with the old list finds nothing in these fixtures, and the scan with the
+// list in use finds each.
+func TestTheLongerWriterListCatchesWhatTheOldOneMissed(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"Execute of a template", filepath.Join("..", "webapp.go"), `tmpl.Execute(w, row)`},
+		{"ExecuteTemplate of a template set", "wrap.go", `set.ExecuteTemplate(w, "shell", row)`},
+		{"WriteTo of a buffer", "wrap.go", `buf.WriteTo(w)`},
+		{"Flush of the writer", "wrap.go", `w.(http.Flusher).Flush()`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "package x\nfunc f() {\n\t" + tc.body + "\n}\n"
+			file, err := parser.ParseFile(token.NewFileSet(), tc.path, src, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := findingsFor(writersBeforeTemplates, tc.path, file); len(got) != 0 {
+				t.Errorf("the old list found %v, want nothing", got)
+			}
+			if got := findingsFor(writers, tc.path, file); len(got) != 1 {
+				t.Errorf("the list in use found %v, want 1 finding", got)
 			}
 		})
 	}

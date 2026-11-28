@@ -176,7 +176,8 @@ serialises, it needs no extra tool in `mise.toml`, and it fails in `go test` on 
   and `owner/dto` must not import the store.
 - `TestOnlyTheAdapterWritesAResponse` keeps handlers from writing around the adapter. Its
   writer list holds `Write`, `Fprint*`, `io.Copy` and its variants, `ReadFrom`,
-  `http.ServeContent` and `http.ServeFile`, in every file under `internal/webapp`, so the SPA
+  `http.ServeContent`, `http.ServeFile`, `Execute`, `ExecuteTemplate`, `WriteTo` and `Flush`,
+  in every file under `internal/webapp`, so the SPA
   handler and a wrapper around the mux are covered too. `TestTheWriterScanCatchesEveryWayToPutBytesOnAResponse`
   proves each one fails.
 - `internal/legal` is the one writer outside the adapter on the public mux (the legal
