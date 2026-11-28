@@ -17,10 +17,10 @@ import (
 	"github.com/ostendorf-cloud/wishlist/internal/webapp/owner/ownertest"
 )
 
-// wantPolicy is govue v0.5.0's DefaultPolicy with the nonce stripped. The
+// wantPolicy is govue v0.12.0's DefaultPolicy with the nonce stripped. The
 // whole policy is compared, so any added source or directive fails.
 const wantPolicy = "default-src 'none'; script-src 'self' 'nonce-X'; style-src 'self' 'nonce-X'; " +
-	"img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; " +
+	"img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; form-action 'self'; " +
 	"frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
 
 const wantHSTS = "max-age=31536000"
