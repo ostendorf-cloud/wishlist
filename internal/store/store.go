@@ -79,6 +79,9 @@ func (c *Core) Guests() *GuestStore { return &GuestStore{pool: c.pool} }
 func dsn(cfg config.Database) string {
 	q := url.Values{}
 	q.Set("sslmode", cfg.SSLMode)
+	if cfg.SSLRootCert != "" {
+		q.Set("sslrootcert", cfg.SSLRootCert)
+	}
 	u := url.URL{
 		Scheme:   "postgres",
 		User:     url.User(cfg.User),
