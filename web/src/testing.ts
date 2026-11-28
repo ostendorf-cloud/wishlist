@@ -108,7 +108,14 @@ export function fakeAuth(options: { signedIn?: boolean; registrationOpen?: boole
   })
   return {
     state,
-    client: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), del: vi.fn() },
+    client: {
+      get: vi.fn(),
+      head: vi.fn(),
+      post: vi.fn(),
+      put: vi.fn(),
+      patch: vi.fn(),
+      del: vi.fn(),
+    },
     refresh: vi.fn().mockResolvedValue(undefined),
     signOut: vi.fn().mockImplementation(() => {
       state.signedIn = false
