@@ -131,6 +131,14 @@ concurrently` cannot be a migration. Extend the runner first. The password from 
 or `DB_PASSWORD_FILE` is whitespace trimmed by govue's `envconf`, from the variable and from
 the file alike.
 
+The server certificate is checked through `DB_SSLROOTCERT` (a PEM file) and `DB_SSLMODE`.
+`config.checkSSLRootCert` requires the file for `verify-ca` and `verify-full`, and refuses it
+for `disable`, `allow` and `prefer`, which never verify. `require` may carry it, and pgx then
+checks the chain like `verify-ca`. The store passes it as `sslrootcert` in the DSN. The chart
+default is `verify-full` with the CA Secret mounted read only. `internal/store/tls_test.go`
+runs the real client against a fake server that only does the TLS handshake, so a wrong CA and
+a wrong host name are refused without a PostgreSQL. Client certificates are not supported.
+
 ## The owner API
 
 Endpoints under `/api/v1/owner`, in `internal/webapp/owner`. Lists and wishes: create, read,

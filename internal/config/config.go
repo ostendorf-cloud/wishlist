@@ -6,6 +6,7 @@
 package config
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -105,6 +107,11 @@ type Database struct {
 	Password string
 	// SSLMode is one of the values libpq knows.
 	SSLMode string
+	// SSLRootCert is the path of a PEM file with the root certificates that
+	// sign the server's certificate. Required for verify-ca and verify-full,
+	// optional for require (which then verifies the chain like verify-ca) and
+	// refused for the modes that never verify.
+	SSLRootCert string
 	// MaxConns caps the pool. Several pods share one server, so the cap is
 	// per pod.
 	MaxConns int32
@@ -164,6 +171,42 @@ func (d Database) LogValue() slog.Value {
 // sslModes are the values PostgreSQL's sslmode parameter accepts.
 var sslModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
 
+// checkSSLRootCert ties DB_SSLROOTCERT to DB_SSLMODE. The modes that verify
+// the certificate chain need a root to verify against, and the modes that never
+// verify would ignore it silently, which reads as a protection that is not
+// there. The mode require takes a root without needing one, and checks it when
+// given. A mode that is not valid is reported by its own check, so it adds
+// nothing here. The error names the variable and the path, never file content.
+func checkSSLRootCert(mode, path string) error {
+	switch mode {
+	case "verify-ca", "verify-full":
+		if path == "" {
+			return fmt.Errorf("envconf: DB_SSLROOTCERT: required when DB_SSLMODE is %s", mode)
+		}
+	case "disable", "allow", "prefer":
+		if path != "" {
+			return fmt.Errorf("envconf: DB_SSLROOTCERT: refused when DB_SSLMODE is %s, the mode never verifies the server", mode)
+		}
+		return nil
+	case "require":
+		// The root is optional, but pgx reads a given one and checks the chain
+		// with it, so a bad file is reported here and not at the first connect.
+		if path == "" {
+			return nil
+		}
+	default:
+		return nil
+	}
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("envconf: DB_SSLROOTCERT: cannot read %q", path)
+	}
+	if !x509.NewCertPool().AppendCertsFromPEM(pem) {
+		return fmt.Errorf("envconf: DB_SSLROOTCERT: %q holds no PEM certificate", path)
+	}
+	return nil
+}
+
 // Load reads every setting through envconf, so a misconfigured deployment
 // reports every mistake on the first start instead of one per restart.
 //
@@ -191,11 +234,16 @@ func Load(getenv func(string) string) (Config, error) {
 		User:           l.Required("DB_USER"),
 		Password:       l.RequiredSecretOrFile("DB_PASSWORD"),
 		SSLMode:        l.String("DB_SSLMODE", "require"),
+		SSLRootCert:    l.String("DB_SSLROOTCERT", ""),
 		MaxConns:       int32(l.Int("DB_MAX_CONNS", 10, 1, 100)),
 		ConnectTimeout: l.Duration("DB_CONNECT_TIMEOUT", 5*time.Second, time.Second, time.Minute),
 	}
 	if !slices.Contains(sslModes, cfg.Database.SSLMode) {
 		problems = append(problems, fmt.Errorf("envconf: DB_SSLMODE: must be one of %v, got %q", sslModes, cfg.Database.SSLMode))
+	}
+
+	if err := checkSSLRootCert(cfg.Database.SSLMode, cfg.Database.SSLRootCert); err != nil {
+		problems = append(problems, err)
 	}
 
 	cfg.RegistrationOpen = l.Bool("REGISTRATION_OPEN", false)

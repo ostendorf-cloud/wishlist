@@ -1,0 +1,108 @@
+suite: database server certificate
+templates:
+  - templates/deployment.yaml
+tests:
+  - it: verifies the server certificate by default, against the CloudNativePG cluster CA
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DB_SSLMODE
+            value: verify-full
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DB_SSLROOTCERT
+            value: /etc/wishlist/database-ca/ca.crt
+
+  - it: mounts the root certificate read only and projects only its key
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: database-ca
+            mountPath: /etc/wishlist/database-ca
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: database-ca
+            secret:
+              secretName: wishlist-postgres-ca
+              defaultMode: 292
+              items:
+                - key: ca.crt
+                  path: ca.crt
+
+  - it: keeps the password mount first, so the pod still finds it
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].name
+          value: database
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].name
+          value: database
+
+  - it: follows the secret and key names from the values
+    set:
+      database:
+        sslRootCert:
+          secretName: other-ca
+          key: root.pem
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DB_SSLROOTCERT
+            value: /etc/wishlist/database-ca/root.pem
+      - equal:
+          path: spec.template.spec.volumes[1].secret.secretName
+          value: other-ca
+      - equal:
+          path: spec.template.spec.volumes[1].secret.items[0].key
+          value: root.pem
+
+  - it: accepts verify-ca with a root certificate
+    set:
+      database:
+        sslMode: verify-ca
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DB_SSLMODE
+            value: verify-ca
+
+  - it: renders no root certificate for a mode that never verifies
+    set:
+      database:
+        sslMode: disable
+        sslRootCert:
+          secretName: ""
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "DB_SSLROOTCERT")]
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 1
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 1
+
+  - it: fails a verifying mode without a root certificate
+    set:
+      database:
+        sslMode: verify-full
+        sslRootCert:
+          secretName: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: database.sslRootCert.secretName is required when database.sslMode is verify-full
+
+  - it: fails a mode that never verifies when a root certificate is set
+    set:
+      database:
+        sslMode: prefer
+    asserts:
+      - failedTemplate:
+          errorPattern: database.sslRootCert.secretName cannot be set when database.sslMode is prefer

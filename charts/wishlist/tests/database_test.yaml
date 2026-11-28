@@ -28,7 +28,7 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DB_SSLMODE
-            value: require
+            value: verify-full
       - contains:
           path: spec.template.spec.containers[0].env
           content:

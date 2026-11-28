@@ -57,7 +57,7 @@
     },
     "database": {
       "type": "object",
-      "required": ["host", "port", "name", "user", "sslMode", "maxConns", "connectTimeout", "existingSecret"],
+      "required": ["host", "port", "name", "user", "sslMode", "sslRootCert", "maxConns", "connectTimeout", "existingSecret"],
       "properties": {
         "host": { "type": "string", "minLength": 1 },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
@@ -66,6 +66,14 @@
         "sslMode": {
           "type": "string",
           "enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]
+        },
+        "sslRootCert": {
+          "type": "object",
+          "required": ["secretName", "key"],
+          "properties": {
+            "secretName": { "type": "string" },
+            "key": { "type": "string", "minLength": 1 }
+          }
         },
         "maxConns": { "type": "integer", "minimum": 1, "maximum": 100 },
         "connectTimeout": { "type": "string", "minLength": 2 },

@@ -152,9 +152,19 @@ database:
   port: 5432
   name: app
   user: app
-  # disable, allow, prefer, require, verify-ca or verify-full. "require"
-  # encrypts the connection and does not verify the server certificate.
-  sslMode: require
+  # disable, allow, prefer, require, verify-ca or verify-full. The default
+  # verifies the server certificate and its host name against the root
+  # certificate below. "require" encrypts and does not verify, unless a root
+  # certificate is set, which makes it check the chain like verify-ca.
+  sslMode: verify-full
+  # The Secret with the root certificate that signed the server's certificate.
+  # Required for verify-ca and verify-full, mounted read only, and only this
+  # key is projected. The defaults are CloudNativePG's cluster CA for a cluster
+  # named "wishlist-postgres". Leave secretName empty for disable, allow,
+  # prefer and a plain require.
+  sslRootCert:
+    secretName: wishlist-postgres-ca
+    key: ca.crt
   # Pool size per pod, 1 to 100.
   maxConns: 10
   # One attempt to open a connection, 1s to 1m.
