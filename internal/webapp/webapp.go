@@ -28,6 +28,7 @@ import (
 	"github.com/ostendorf-cloud/govue/csrf"
 	"github.com/ostendorf-cloud/govue/middleware"
 	"github.com/ostendorf-cloud/govue/ratelimit"
+	"github.com/ostendorf-cloud/govue/themeboot"
 
 	"github.com/ostendorf-cloud/wishlist/internal/legal"
 	"github.com/ostendorf-cloud/wishlist/internal/secheaders"
@@ -212,8 +213,30 @@ func isSPARoute(p string) bool {
 // spa serves the built files and, for GET and HEAD of a route of the SPA,
 // index.html so the router in the browser can take a deep link. Everything
 // else is a plain 404.
+//
+// The shell carries govue's theme boot script, injected here with the nonce of
+// the response, so a stored colour mode shows at first paint. The static file
+// cannot hold the script: the policy runs a script with the nonce only.
+// themeboot.Shell marks the response no-store, because a page with a nonce
+// must never be served again from a cache.
 func spa(dist fs.FS) http.Handler {
 	files := http.FileServerFS(dist)
+	var shell http.Handler
+	if page, err := fs.ReadFile(dist, "index.html"); err == nil {
+		shell = themeboot.Shell(page)
+	}
+	// serveShell sends GET and HEAD through the same handler, so a HEAD answer
+	// carries the headers and the length of the GET answer. net/http drops the
+	// body of a HEAD answer.
+	serveShell := func(w http.ResponseWriter, r *http.Request) {
+		if shell != nil {
+			shell.ServeHTTP(w, r)
+			return
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/"
+		files.ServeHTTP(w, r2)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)
@@ -224,7 +247,11 @@ func spa(dist fs.FS) http.Handler {
 		if name == "" {
 			name = "."
 		}
-		if info, err := fs.Stat(dist, name); err == nil && !info.IsDir() || name == "." {
+		if name == "." {
+			serveShell(w, r)
+			return
+		}
+		if info, err := fs.Stat(dist, name); err == nil && !info.IsDir() {
 			files.ServeHTTP(w, r)
 			return
 		}
@@ -232,8 +259,6 @@ func spa(dist fs.FS) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		r2 := r.Clone(r.Context())
-		r2.URL.Path = "/"
-		files.ServeHTTP(w, r2)
+		serveShell(w, r)
 	})
 }

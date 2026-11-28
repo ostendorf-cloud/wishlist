@@ -26,11 +26,10 @@ const hsts = "max-age=31536000"
 // The policy is govue's default, unchanged: same origin script, style, image,
 // font and fetch, no framing, no base tag, and a per response nonce for inline
 // script and style. The built SPA needs nothing more, because the build
-// writes one module script and one stylesheet as files. The nonce would let
-// govue's theme boot script run once the handler injects it. No code does that
-// yet. Both servers need the injection: spa() in internal/webapp and
-// internal/legal for the prerendered pages. themeboot.Shell sets no-store,
-// themeboot.Inject alone does not, and a page with a nonce must never be cached.
+// writes one module script and one stylesheet as files. The nonce lets
+// govue's theme boot script run: spa() in internal/webapp and internal/legal
+// inject it into the shell and the prerendered pages. themeboot.Shell sets
+// no-store, and a page with a nonce must never be cached.
 // TestTheBuiltSPAFitsThePolicy in cmd/wishlist checks the built files.
 //
 // Strict-Transport-Security differs from the default. govue's HSTS is switched

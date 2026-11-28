@@ -14,6 +14,7 @@ import (
 	"net/http"
 
 	"github.com/ostendorf-cloud/govue/language"
+	"github.com/ostendorf-cloud/govue/themeboot"
 )
 
 // Languages and Pages are the canonical set /<language>/<page>. The site has
@@ -43,12 +44,15 @@ func Register(mux *http.ServeMux, dist fs.FS) error {
 
 // pageHandler serves one prerendered file, or a 404 when the build did not
 // write it. The path comes from the fixed set above, never from the request.
+//
+// The page carries govue's theme boot script, injected with the nonce of the
+// response, so a stored colour mode shows at first paint. The static file
+// cannot hold it: the policy runs a script with the nonce only. The response is
+// no-store, because a page with a nonce must never be served from a cache.
 func pageHandler(dist fs.FS, name string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if info, err := fs.Stat(dist, name); err != nil || info.IsDir() {
-			http.NotFound(w, r)
-			return
-		}
-		http.ServeFileFS(w, r, dist, name)
-	})
+	page, err := fs.ReadFile(dist, name)
+	if err != nil {
+		return http.NotFoundHandler()
+	}
+	return themeboot.Shell(page)
 }

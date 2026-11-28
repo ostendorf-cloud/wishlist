@@ -6,17 +6,23 @@ package legal
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/ostendorf-cloud/govue/middleware"
+	"github.com/ostendorf-cloud/govue/themeboot"
 )
 
-func newMux(t *testing.T) *http.ServeMux {
+// newMux mounts the pages behind govue's security middleware, which puts the
+// nonce of the response into the request context like the public handler does.
+func newMux(t *testing.T) http.Handler {
 	t.Helper()
 	dist := fstest.MapFS{}
 	for _, lang := range Languages {
 		for _, page := range Pages {
-			dist[lang+"/"+page+"/index.html"] = &fstest.MapFile{Data: []byte("<html>" + lang + " " + page + "</html>")}
+			dist[lang+"/"+page+"/index.html"] = &fstest.MapFile{Data: []byte("<!doctype html><html><head><title>t</title></head><body>" + lang + " " + page + "</body></html>")}
 		}
 	}
 	mux := http.NewServeMux()
@@ -25,7 +31,7 @@ func newMux(t *testing.T) *http.ServeMux {
 	}
 	// The site's catch all, so a path the set does not own is visible as 404.
 	mux.Handle("/", http.NotFoundHandler())
-	return mux
+	return middleware.DefaultSecurity().Middleware(mux)
 }
 
 func get(t *testing.T, mux http.Handler, method, target string, header map[string]string) *httptest.ResponseRecorder {
@@ -85,8 +91,44 @@ func TestThePagesAreServedFromTheBuild(t *testing.T) {
 			}
 		}
 	}
-	if rec := get(t, mux, http.MethodHead, "/de/imprint", nil); rec.Code != http.StatusOK || rec.Body.Len() != 0 {
-		t.Errorf("HEAD = %d with %d bytes", rec.Code, rec.Body.Len())
+	rec := get(t, mux, http.MethodHead, "/de/imprint", nil)
+	if rec.Code != http.StatusOK {
+		t.Errorf("HEAD = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("HEAD Cache-Control = %q, want no-store", got)
+	}
+}
+
+var nonceInCSP = regexp.MustCompile(`script-src [^;]*'nonce-([A-Za-z0-9+/=_-]{16,})'`)
+
+func TestEveryPageCarriesTheBootScriptWithTheNonceOfItsResponse(t *testing.T) {
+	mux := newMux(t)
+	seen := map[string]bool{}
+	for _, lang := range Languages {
+		for _, page := range Pages {
+			target := "/" + lang + "/" + page
+			rec := get(t, mux, http.MethodGet, target, nil)
+			m := nonceInCSP.FindStringSubmatch(rec.Header().Get("Content-Security-Policy"))
+			if m == nil {
+				t.Fatalf("%s: no script nonce in %q", target, rec.Header().Get("Content-Security-Policy"))
+			}
+			nonce := m[1]
+			if seen[nonce] {
+				t.Errorf("%s: nonce %q repeats", target, nonce)
+			}
+			seen[nonce] = true
+			body := rec.Body.String()
+			if want := `<script nonce="` + nonce + `">`; !strings.Contains(body, want) {
+				t.Errorf("%s: no %s in %q", target, want, body)
+			}
+			if !strings.Contains(body, themeboot.StorageKey) {
+				t.Errorf("%s: the boot script does not read %q", target, themeboot.StorageKey)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("%s: Cache-Control = %q, want no-store", target, got)
+			}
+		}
 	}
 }
 
