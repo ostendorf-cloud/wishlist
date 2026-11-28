@@ -27,9 +27,9 @@ import (
 // inline content cannot break the site silently. The theme boot script is not
 // in the files: once it exists it is injected at serve time with the nonce.
 
-// wantPolicy is govue v0.5.0's DefaultPolicy with the nonce stripped.
+// wantPolicy is govue v0.12.0's DefaultPolicy with the nonce stripped.
 const wantPolicy = "default-src 'none'; script-src 'self' 'nonce-X'; style-src 'self' 'nonce-X'; " +
-	"img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; " +
+	"img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; form-action 'self'; " +
 	"frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
 
 var nonceRe = regexp.MustCompile(`'nonce-[A-Za-z0-9+/=_-]{16,}'`)

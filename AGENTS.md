@@ -327,7 +327,7 @@ and a redirect carry it too. It sits outside `internal/webapp` because the handl
 allows no other code there to take a `ResponseWriter`. The admin listener is not covered.
 
 - The policy is govue's default, unchanged: `default-src 'none'`, same origin script, style,
-  image (plus `data:`), font and fetch, `form-action 'self'`, `frame-ancestors 'none'`,
+  image (plus `data:`), font, fetch and worker, `form-action 'self'`, `frame-ancestors 'none'`,
   `base-uri 'none'`, `object-src 'none'`, and a fresh nonce on `script-src` and `style-src`.
   With `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` and the
   cross origin isolation headers.
